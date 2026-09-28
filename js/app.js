@@ -20,6 +20,7 @@
         state.customers = s.customers;
         renderSegments(); renderSegSelect(); renderCampaign(); renderTracking();
       }
+      renderHeadStats();
     } catch (e) { /* fresh start */ }
   }
   function save() {
@@ -29,6 +30,20 @@
         customers: state.customers, tracking: state.tracking
       }));
     } catch (e) { /* storage full/blocked */ }
+  }
+
+  function renderHeadStats() {
+    var el = $('headStats');
+    if (!el) return;
+    if (!state.customers.length) {
+      el.innerHTML = '<span class="stat">Import your list to begin</span>';
+      return;
+    }
+    var won = state.tracking.filter(function (t) { return t.result === 'won'; }).length;
+    el.innerHTML =
+      '<span class="stat"><b>' + state.customers.length + '</b> customers</span>' +
+      '<span class="stat"><b>' + state.tracking.length + '</b> contacts logged</span>' +
+      '<span class="stat"><b>' + won + '</b> won back</span>';
   }
 
   /* Tabs */
@@ -71,7 +86,7 @@
       return;
     }
     state.customers = W.segmentCustomers(parsed.rows);
-    save();
+    save(); renderHeadStats();
     renderSegments(); renderSegSelect(); renderCampaign();
     msg.push('<div class="ok"><b>' + parsed.rows.length + '</b> customers segmented. ' +
       'Head to Segments →</div>');
@@ -204,7 +219,7 @@
       result: $('trkResult').value
     });
     $('trkEmail').value = '';
-    save(); renderTracking();
+    save(); renderTracking(); renderHeadStats();
   });
 
   $('trkExport').addEventListener('click', function () {

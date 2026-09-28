@@ -9,13 +9,16 @@
 <body>
 <header>
   <div class="bar">
-  <h1>WinBack<span class="ai">AI</span></h1>
-  <p>Re-activating past customers is 5× cheaper than new ads. Paste your customer list, get a segmented win-back campaign.</p>
+    <div class="bar-inner">
+      <h1>WinBack<span class="ai">AI</span></h1>
+      <p class="leadin">The reactivation studio — win back past customers with segmented, margin-smart campaigns.</p>
+      <div class="stats" id="headStats"><span class="stat">Import your list to begin</span></div>
+    </div>
   </div>
 </header>
 
 <div class="wrap">
-  <div class="row" style="margin-bottom:16px">
+  <div class="row setup-row">
     <div>
       <label for="bizName">Business name</label>
       <input type="text" id="bizName" placeholder="e.g. Main Street Plumbing" value="">
@@ -29,21 +32,22 @@
     </div>
   </div>
 
-  <div class="tabs">
-    <button data-tab="import" class="active">1 · Import</button>
-    <button data-tab="segments">2 · Segments</button>
-    <button data-tab="campaign">3 · Campaign</button>
-    <button data-tab="tracking">4 · Tracking</button>
-    <button data-tab="roi">5 · ROI</button>
-  </div>
+  <nav class="tabs" aria-label="Campaign workflow">
+    <button data-tab="import" class="active"><span class="n">1</span> Import</button>
+    <button data-tab="segments"><span class="n">2</span> Segments</button>
+    <button data-tab="campaign"><span class="n">3</span> Campaign</button>
+    <button data-tab="tracking"><span class="n">4</span> Tracking</button>
+    <button data-tab="roi"><span class="n">5</span> ROI</button>
+  </nav>
 
   <!-- IMPORT -->
   <div class="tab active" id="tab-import">
     <div class="card">
+      <p class="kicker">Step 1 — audience</p>
       <h2>Import your past customers</h2>
       <p class="sub">Paste CSV with columns: <b>name, email, last_purchase, total_spent</b> (orders optional). Everything stays in your browser — nothing is uploaded.</p>
       <textarea id="csvInput" placeholder="name,email,last_purchase,total_spent,orders&#10;Jane Doe,jane@example.com,2025-11-02,840,6&#10;Bob Smith,bob@example.com,2026-06-15,120,1"></textarea>
-      <div>
+      <div class="btnrow">
         <button class="btn" id="loadSample">Load sample data</button>
         <button class="btn ghost" id="parseBtn">Segment my list →</button>
       </div>
@@ -54,6 +58,7 @@
   <!-- SEGMENTS -->
   <div class="tab" id="tab-segments">
     <div class="card">
+      <p class="kicker">Step 2 — audience intelligence</p>
       <h2>Smart segments</h2>
       <p class="sub">RFM-lite segmentation: how <b>recently</b> they bought × how <b>much</b> they spent. Click a segment to build its campaign.</p>
       <div class="seg-grid" id="segGrid"></div>
@@ -64,6 +69,7 @@
   <!-- CAMPAIGN -->
   <div class="tab" id="tab-campaign">
     <div class="card">
+      <p class="kicker">Step 3 — creative</p>
       <h2>Campaign generator</h2>
       <p class="sub">Per-segment email + SMS drafts with subject lines and a margin-smart offer. Personalize per customer, copy, and send from your own email tool.</p>
       <label for="segSel">Segment</label>
@@ -75,6 +81,7 @@
   <!-- TRACKING -->
   <div class="tab" id="tab-tracking">
     <div class="card">
+      <p class="kicker">Step 4 — field results</p>
       <h2>Send checklist &amp; results</h2>
       <p class="sub">Log who you contacted, when, and what happened. Saved locally.</p>
       <div class="row">
@@ -85,8 +92,10 @@
         <div><label>Channel</label><select id="trkChannel"><option>Email</option><option>SMS</option><option>Phone</option></select></div>
         <div><label>Result</label><select id="trkResult"><option value="sent">Sent — no reply yet</option><option value="opened">Opened / replied</option><option value="won">Won back 🎉</option><option value="ignored">Ignored</option><option value="unsub">Unsubscribed</option></select></div>
       </div>
-      <button class="btn" id="trkAdd">Log contact</button>
-      <button class="btn ghost" id="trkExport">Export CSV</button>
+      <div class="btnrow">
+        <button class="btn" id="trkAdd">Log contact</button>
+        <button class="btn ghost" id="trkExport">Export CSV</button>
+      </div>
       <div id="trkTable"></div>
     </div>
   </div>
@@ -94,6 +103,7 @@
   <!-- ROI -->
   <div class="tab" id="tab-roi">
     <div class="card">
+      <p class="kicker">Step 5 — the math</p>
       <h2>ROI estimator</h2>
       <p class="sub">Honest math: expected win-backs × average order × margin, minus offer cost. Adjust the assumptions — defaults are conservative.</p>
       <div class="row">
@@ -106,7 +116,7 @@
     </div>
   </div>
 
-  <div class="note"><b>Privacy:</b> 100% local. Your customer list never leaves this browser. No accounts, no tracking, no sending — you send from your own email/SMS tool.</div>
+  <div class="note priv"><b>Privacy:</b> 100% local. Your customer list never leaves this browser. No accounts, no tracking, no sending — you send from your own email/SMS tool.</div>
 </div>
 
 <footer>WinBack AI · built free, runs free · your list stays yours</footer>
