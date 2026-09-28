@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WinBack AI — Bring past customers back</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header>
+  <h1>WinBack <span>AI</span></h1>
+  <p>Re-activating past customers is 5× cheaper than new ads. Paste your customer list, get a segmented win-back campaign.</p>
+</header>
+
+<div class="wrap">
+  <div class="row" style="margin-bottom:16px">
+    <div>
+      <label for="bizName">Business name</label>
+      <input type="text" id="bizName" placeholder="e.g. Main Street Plumbing" value="">
+    </div>
+    <div>
+      <label for="toneSel">Campaign tone</label>
+      <select id="toneSel">
+        <option value="warm">Warm &amp; friendly</option>
+        <option value="bold">Bold &amp; direct</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <button data-tab="import" class="active">1 · Import</button>
+    <button data-tab="segments">2 · Segments</button>
+    <button data-tab="campaign">3 · Campaign</button>
+    <button data-tab="tracking">4 · Tracking</button>
+    <button data-tab="roi">5 · ROI</button>
+  </div>
+
+  <!-- IMPORT -->
+  <div class="tab active" id="tab-import">
+    <div class="card">
+      <h2>Import your past customers</h2>
+      <p class="sub">Paste CSV with columns: <b>name, email, last_purchase, total_spent</b> (orders optional). Everything stays in your browser — nothing is uploaded.</p>
+      <textarea id="csvInput" placeholder="name,email,last_purchase,total_spent,orders&#10;Jane Doe,jane@example.com,2025-11-02,840,6&#10;Bob Smith,bob@example.com,2026-06-15,120,1"></textarea>
+      <div>
+        <button class="btn" id="loadSample">Load sample data</button>
+        <button class="btn ghost" id="parseBtn">Segment my list →</button>
+      </div>
+      <div id="importMsg" style="margin-top:10px"></div>
+    </div>
+  </div>
+
+  <!-- SEGMENTS -->
+  <div class="tab" id="tab-segments">
+    <div class="card">
+      <h2>Smart segments</h2>
+      <p class="sub">RFM-lite segmentation: how <b>recently</b> they bought × how <b>much</b> they spent. Click a segment to build its campaign.</p>
+      <div class="seg-grid" id="segGrid"></div>
+      <div id="segTable"></div>
+    </div>
+  </div>
+
+  <!-- CAMPAIGN -->
+  <div class="tab" id="tab-campaign">
+    <div class="card">
+      <h2>Campaign generator</h2>
+      <p class="sub">Per-segment email + SMS drafts with subject lines and a margin-smart offer. Personalize per customer, copy, and send from your own email tool.</p>
+      <label for="segSel">Segment</label>
+      <select id="segSel"></select>
+      <div id="campaignOut"></div>
+    </div>
+  </div>
+
+  <!-- TRACKING -->
+  <div class="tab" id="tab-tracking">
+    <div class="card">
+      <h2>Send checklist &amp; results</h2>
+      <p class="sub">Log who you contacted, when, and what happened. Saved locally.</p>
+      <div class="row">
+        <div><label>Customer email</label><input type="text" id="trkEmail" placeholder="jane@example.com"></div>
+        <div><label>Date sent</label><input type="date" id="trkDate"></div>
+      </div>
+      <div class="row">
+        <div><label>Channel</label><select id="trkChannel"><option>Email</option><option>SMS</option><option>Phone</option></select></div>
+        <div><label>Result</label><select id="trkResult"><option value="sent">Sent — no reply yet</option><option value="opened">Opened / replied</option><option value="won">Won back 🎉</option><option value="ignored">Ignored</option><option value="unsub">Unsubscribed</option></select></div>
+      </div>
+      <button class="btn" id="trkAdd">Log contact</button>
+      <button class="btn ghost" id="trkExport">Export CSV</button>
+      <div id="trkTable"></div>
+    </div>
+  </div>
+
+  <!-- ROI -->
+  <div class="tab" id="tab-roi">
+    <div class="card">
+      <h2>ROI estimator</h2>
+      <p class="sub">Honest math: expected win-backs × average order × margin, minus offer cost. Adjust the assumptions — defaults are conservative.</p>
+      <div class="row">
+        <div><label>Average order value ($)</label><input type="number" id="roiAov" value="75" min="1"></div>
+        <div><label>Gross margin (0–1)</label><input type="number" id="roiMargin" value="0.5" min="0" max="1" step="0.05"></div>
+      </div>
+      <button class="btn" id="roiCalc">Calculate</button>
+      <div id="roiOut"></div>
+      <p class="hint">Response rates are editable assumptions (champions 25%, recent 15%, at-risk 12%, lapsed 8%, dormant VIPs 15%, lost 3%). Treat the estimate as directional, not a promise.</p>
+    </div>
+  </div>
+
+  <div class="note"><b>Privacy:</b> 100% local. Your customer list never leaves this browser. No accounts, no tracking, no sending — you send from your own email/SMS tool.</div>
+</div>
+
+<footer>WinBack AI · built free, runs free · your list stays yours</footer>
+
+<script src="js/logic.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
