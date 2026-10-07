@@ -15,7 +15,7 @@
   --coral-deep: #9c3a22;
   --coral-soft: #f9e4dc;
   --moss: #5f7a4a;
-  --radius: 14px;
+  --radius: 0;
   --shadow: 0 1px 2px rgba(33, 27, 19, .06), 0 14px 32px rgba(33, 27, 19, .08);
   --serif: Georgia, "Times New Roman", serif;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif;
@@ -37,11 +37,11 @@ button { font-family: var(--sans); cursor: pointer; }
 .hint { color: var(--muted); font-size: 13px; }
 .err {
   background: #faece7; border: 1px solid #e3b39f; color: #8a2f1b;
-  border-radius: 10px; padding: 10px 14px; margin-bottom: 10px; font-size: 13.5px;
+  border-radius: 0; padding: 10px 14px; margin-bottom: 10px; font-size: 13.5px;
 }
 .ok {
   background: #eef3e6; border: 1px solid #c6d8ae; color: #42592c;
-  border-radius: 10px; padding: 10px 14px; margin: 12px 0; font-size: 13.5px;
+  border-radius: 0; padding: 10px 14px; margin: 12px 0; font-size: 13.5px;
 }
 
 /* ---------- mission-control header ---------- */
@@ -50,7 +50,7 @@ header { background: #201912; color: #f3ecdd; }
 .bar-inner h1 { font-family: var(--serif); font-size: 34px; font-weight: 600; letter-spacing: -.5px; margin: 0 0 6px; }
 .bar-inner h1 .ai {
   font-family: var(--mono); font-size: 12px; font-weight: 700; letter-spacing: 2px;
-  color: #f2a98f; border: 1px solid rgba(242, 169, 143, .45); border-radius: 6px;
+  color: #f2a98f; border: 1px solid rgba(242, 169, 143, .45); border-radius: 0;
   padding: 3px 9px; margin-left: 10px; vertical-align: 6px;
 }
 .leadin { margin: 0; color: #b3a78b; font-size: 14.5px; max-width: 620px; }
@@ -61,7 +61,7 @@ header { background: #201912; color: #f3ecdd; }
 .stat {
   font-family: var(--mono); font-size: 12.5px; letter-spacing: .5px; color: #e8d9b8;
   background: rgba(255, 255, 255, .06); border: 1px solid rgba(255, 255, 255, .1);
-  border-radius: 999px; padding: 7px 15px; font-variant-numeric: tabular-nums;
+  border-radius: 0; padding: 7px 15px; font-variant-numeric: tabular-nums;
 }
 .stat b { color: #f2a98f; }
 
@@ -76,7 +76,7 @@ header { background: #201912; color: #f3ecdd; }
 label { display: block; font-size: 13px; font-weight: 650; color: var(--ink-soft); }
 input[type="text"], input[type="number"], input[type="date"], select, textarea {
   width: 100%; margin-top: 7px; font-family: var(--sans); font-size: 14.5px; color: var(--ink);
-  border: 1px solid var(--line); border-radius: 10px; background: #fff; padding: 11px 14px;
+  border: 1px solid var(--line); border-radius: 0; background: #fff; padding: 11px 14px;
   transition: border-color .15s, box-shadow .15s;
 }
 input:focus, select:focus, textarea:focus {
@@ -108,7 +108,7 @@ textarea#csvInput { min-height: 150px; font-family: var(--mono); font-size: 13px
   box-shadow: var(--shadow); padding: 30px;
 }
 .btn {
-  background: var(--coral); color: #fff; border: none; border-radius: 10px;
+  background: var(--coral); color: #fff; border: none; border-radius: 0;
   font-weight: 650; font-size: 14.5px; padding: 12px 22px; margin: 16px 12px 0 0;
   box-shadow: 0 4px 14px rgba(193, 78, 50, .3); transition: background .15s, transform .12s;
 }
@@ -134,7 +134,7 @@ textarea#csvInput { min-height: 150px; font-family: var(--mono); font-size: 13px
 .seg-card p { margin: 0; font-size: 13px; color: var(--muted); }
 .pill {
   display: inline-block; font-size: 11.5px; font-weight: 700; letter-spacing: .7px; text-transform: uppercase;
-  border-radius: 999px; padding: 4px 12px; background: var(--coral-soft); color: var(--coral-deep);
+  border-radius: 0; padding: 4px 12px; background: var(--coral-soft); color: var(--coral-deep);
   border: 1px solid #e3b39f;
 }
 
@@ -151,12 +151,12 @@ table tr:nth-child(n+2):hover { background: #fbf5e7; }
 
 /* ---------- campaign draft sheets ---------- */
 .note {
-  background: #fbf5e7; border: 1px solid var(--line); border-radius: 12px;
+  background: #fbf5e7; border: 1px solid var(--line); border-radius: 0;
   padding: 14px 18px; margin: 16px 0; font-size: 14px;
 }
 .note.priv { background: var(--card); box-shadow: var(--shadow); }
 .draft {
-  background: #fff; border: 1px solid var(--line); border-radius: 12px;
+  background: #fff; border: 1px solid var(--line); border-radius: 0;
   padding: 18px 20px; margin: 14px 0; white-space: pre-line; font-size: 14px;
   box-shadow: 0 2px 8px rgba(33, 27, 19, .05); border-top: 4px solid var(--coral);
 }
@@ -171,7 +171,7 @@ ul.subjects li { margin-bottom: 6px; }
 /* ---------- KPI strip ---------- */
 .kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; margin: 20px 0; }
 .kpi {
-  background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 16px;
+  background: #fff; border: 1px solid var(--line); border-radius: 0; padding: 16px;
   box-shadow: var(--shadow); text-align: center;
 }
 .kpi .v {
