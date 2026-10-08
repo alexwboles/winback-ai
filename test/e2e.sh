@@ -60,6 +60,47 @@ const blanks = W.parseCSV('name,email,last_purchase,total_spent\n\nBob,bob@x.com
 (noEmail.errors.length > 0 && noEmail.rows.length === 0 && blanks.rows.length === 1)
   ? ok('flow8: missing email column -> error; blank lines ignored') : bad('flow8 edge');
 
+// Flow 9: sortable/searchable customer table
+const bySpend = W.sortCustomers(seg, 'totalSpent', 'desc');
+(bySpend[0].email === 'emma@example.com' && bySpend[bySpend.length-1].email === 'mia@example.com')
+  ? ok('flow9: sort by spend desc -> Emma first, Mia (unknown spend) last') : bad('flow9 sort');
+const bySeg = W.sortCustomers(seg, 'segment', 'asc');
+const prios = bySeg.map(c => W.SEGMENTS[c.segment].priority);
+(prios.every((p, i) => i === 0 || prios[i-1] <= p)) ? ok('flow9: sort by segment follows priority order') : bad('flow9 segment sort');
+(W.searchCustomers(seg, 'martinez').length === 1 && W.searchCustomers(seg, 'EXAMPLE.COM').length === 7)
+  ? ok('flow9: search finds name + domain, case-insensitive') : bad('flow9 search');
+
+// Flow 10: suppression end-to-end — unsub -> excluded from export -> restored
+let supp = W.suppressEmail([], 'lucas@example.com');
+const lapsedSeg = seg.find(c => c.email === 'lucas@example.com').segment;
+const before = W.segmentToCSV(seg, lapsedSeg, []);
+const after = W.segmentToCSV(seg, lapsedSeg, supp);
+(before.count === after.count + 1 && after.csv.indexOf('lucas@example.com') === -1)
+  ? ok('flow10: suppressed email excluded from segment CSV (' + before.count + '->' + after.count + ')') : bad('flow10 export');
+supp = W.unsuppressEmail(supp, 'lucas@example.com');
+const restored = W.segmentToCSV(seg, lapsedSeg, supp);
+(restored.count === before.count) ? ok('flow10: unsuppress restores the contact') : bad('flow10 restore');
+
+// Flow 11: custom offer flows into campaign copy + previews
+const offers = { 'vip-dormant': { value: 'Private tasting event', rationale: 'VIPs deserve VIP' } };
+const vipCamp = W.generateCampaign('vip-dormant', 'Main Street Co', 'bold', 100, offers);
+(vipCamp.offer.type === 'custom' && vipCamp.offer.value === 'Private tasting event' &&
+ vipCamp.email.includes('Private tasting event') && vipCamp.sms.includes('Private tasting event'))
+  ? ok('flow11: custom offer appears in email + SMS drafts') : bad('flow11 custom offer');
+const vipPrev = W.personalize(vipCamp, { name: 'Emma Patel', email: 'emma@example.com' });
+(vipPrev.email.includes('Private tasting event') && vipPrev.email.includes('Emma'))
+  ? ok('flow11: personalized preview keeps custom offer + name') : bad('flow11 preview');
+
+// Flow 12: follow-up reminders — due list drives the nudge
+const trk = [
+  { email: 'ava@example.com', result: 'opened', followUp: '2026-09-27' },
+  { email: 'liam@example.com', result: 'sent', followUp: '2026-10-05' },
+  { email: 'sofia@example.com', result: 'won', followUp: '2026-09-20' },
+];
+const due = W.followUpsDue(trk, NOW);
+(due.length === 1 && due[0].email === 'ava@example.com')
+  ? ok('flow12: 1 follow-up due today; future + won excluded') : bad('flow12 due');
+
 console.log('');
 console.log('e2e: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

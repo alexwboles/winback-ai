@@ -292,10 +292,10 @@
     });
   }
 
-  function generateCampaign(segment, businessName, tone, avgOrderValue) {
+  function generateCampaign(segment, businessName, tone, avgOrderValue, customOffers) {
     tone = (tone === 'bold') ? 'bold' : 'warm';
     var tpl = (COPY[segment] || COPY.unknown)[tone];
-    var offer = offerFor(segment, avgOrderValue);
+    var offer = resolveOffer(segment, customOffers, avgOrderValue);
     var vars = { biz: businessName || 'our store', offer: offer.value, name: '{name}' };
     return {
       segment: segment,
@@ -387,6 +387,99 @@
     return counts;
   }
 
+  /* ---------- customer table: search + sort ---------- */
+  var SORT_KEYS = ['name', 'email', 'lastPurchase', 'totalSpent', 'segment'];
+
+  function sortCustomers(customers, key, dir) {
+    if (SORT_KEYS.indexOf(key) === -1) key = 'name';
+    var d = (dir === 'desc') ? -1 : 1;
+    return (customers || []).slice().sort(function (a, b) {
+      var av = a[key], bv = b[key];
+      if (key === 'totalSpent') {
+        av = Number(av) || 0; bv = Number(bv) || 0;
+      } else if (key === 'segment') {
+        av = ((SEGMENTS[a.segment] || {}).priority) || 99;
+        bv = ((SEGMENTS[b.segment] || {}).priority) || 99;
+      } else {
+        av = String(av || '').toLowerCase(); bv = String(bv || '').toLowerCase();
+      }
+      return (av < bv ? -1 : av > bv ? 1 : 0) * d;
+    });
+  }
+
+  function searchCustomers(customers, query) {
+    var q = String(query || '').trim().toLowerCase();
+    if (!q) return customers || [];
+    return (customers || []).filter(function (c) {
+      return (String(c.name || '') + ' ' + String(c.email || '')).toLowerCase().indexOf(q) !== -1;
+    });
+  }
+
+  /* ---------- suppression list (unsubscribed / do-not-contact) ---------- */
+  function suppressEmail(list, email) {
+    var e = String(email || '').trim().toLowerCase();
+    var out = (list || []).slice();
+    if (e && out.indexOf(e) === -1) out.push(e);
+    return out;
+  }
+
+  function unsuppressEmail(list, email) {
+    var e = String(email || '').trim().toLowerCase();
+    return (list || []).filter(function (x) { return x !== e; });
+  }
+
+  function isSuppressed(list, email) {
+    return (list || []).indexOf(String(email || '').trim().toLowerCase()) !== -1;
+  }
+
+  function activeCustomers(segmented, suppressions) {
+    return (segmented || []).filter(function (c) { return !isSuppressed(suppressions, c.email); });
+  }
+
+  /* ---------- custom offers per segment ---------- */
+  function resolveOffer(segment, customOffers, avgOrderValue) {
+    var custom = (customOffers || {})[segment];
+    if (custom && String(custom.value || '').trim()) {
+      return {
+        type: 'custom',
+        value: String(custom.value).trim(),
+        rationale: String(custom.rationale || '').trim() || 'Your custom offer for this segment.'
+      };
+    }
+    return offerFor(segment, avgOrderValue);
+  }
+
+  /* ---------- per-segment CSV export (suppressed customers excluded) ---------- */
+  function segmentToCSV(segmented, segment, suppressions) {
+    var list = activeCustomers(
+      (segmented || []).filter(function (c) { return c.segment === segment; }),
+      suppressions
+    );
+    var esc = function (v) {
+      var s = String(v == null ? '' : v);
+      return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    var lines = ['name,email,last_purchase,total_spent,orders'];
+    list.forEach(function (c) {
+      lines.push([esc(c.name), esc(c.email), esc(c.lastPurchase), c.totalSpent, c.orders].join(','));
+    });
+    return { csv: lines.join('\n'), count: list.length };
+  }
+
+  /* ---------- follow-up reminders ---------- */
+  function wbTodayISO() {
+    var d = new Date();
+    var p = function (n) { return (n < 10 ? '0' : '') + n; };
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  }
+
+  function followUpsDue(tracking, today) {
+    var now = today || wbTodayISO();
+    return (tracking || []).filter(function (t) {
+      return t.followUp && t.followUp <= now && t.result !== 'won' && t.result !== 'unsub';
+    });
+  }
+
   return {
     SEGMENTS: SEGMENTS,
     DEFAULT_ASSUMPTIONS: DEFAULT_ASSUMPTIONS,
@@ -397,8 +490,18 @@
     generateCampaign: generateCampaign,
     personalize: personalize,
     offerFor: offerFor,
+    resolveOffer: resolveOffer,
     estimateROI: estimateROI,
     segmentCounts: segmentCounts,
-    firstName: firstName
+    firstName: firstName,
+    sortCustomers: sortCustomers,
+    searchCustomers: searchCustomers,
+    suppressEmail: suppressEmail,
+    unsuppressEmail: unsuppressEmail,
+    isSuppressed: isSuppressed,
+    activeCustomers: activeCustomers,
+    segmentToCSV: segmentToCSV,
+    followUpsDue: followUpsDue,
+    todayISO: wbTodayISO
   };
 });

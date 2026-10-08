@@ -7,7 +7,11 @@
   var state = {
     customers: [],      // segmented
     segSel: 'vip-dormant',
-    tracking: []
+    tracking: [],
+    suppressions: [],   // do-not-contact emails (lowercased)
+    offers: {},         // custom per-segment offers: {seg: {value, rationale}}
+    segQuery: '',
+    segSort: { key: 'segment', dir: 'asc' }
   };
 
   function load() {
@@ -16,6 +20,8 @@
       if (s.bizName) $('bizName').value = s.bizName;
       if (s.tone) $('toneSel').value = s.tone;
       if (s.tracking) state.tracking = s.tracking;
+      if (s.suppressions) state.suppressions = s.suppressions;
+      if (s.offers) state.offers = s.offers;
       if (s.customers && s.customers.length) {
         state.customers = s.customers;
         renderSegments(); renderSegSelect(); renderCampaign(); renderTracking();
@@ -27,7 +33,8 @@
     try {
       localStorage.setItem('winback-ai', JSON.stringify({
         bizName: $('bizName').value, tone: $('toneSel').value,
-        customers: state.customers, tracking: state.tracking
+        customers: state.customers, tracking: state.tracking,
+        suppressions: state.suppressions, offers: state.offers
       }));
     } catch (e) { /* storage full/blocked */ }
   }
@@ -101,6 +108,8 @@
   }
 
   /* Segments */
+  var SORT_LABELS = { name: 'Customer', email: 'Email', lastPurchase: 'Last purchase', totalSpent: 'Spent', segment: 'Segment' };
+
   function renderSegments() {
     var grid = $('segGrid'), tbl = $('segTable');
     var counts = W.segmentCounts(state.customers);
@@ -120,17 +129,43 @@
       grid.appendChild(d);
     });
 
-    var rows = state.customers.slice().sort(function (a, b) {
-      return W.SEGMENTS[a.segment].priority - W.SEGMENTS[b.segment].priority ||
-        (b.totalSpent - a.totalSpent);
-    });
-    var html = '<table><tr><th>Customer</th><th>Email</th><th>Last purchase</th><th>Spent</th><th>Segment</th></tr>';
+    var rows = W.sortCustomers(
+      W.searchCustomers(state.customers, state.segQuery),
+      state.segSort.key, state.segSort.dir
+    );
+    function th(key) {
+      var arrow = state.segSort.key === key ? (state.segSort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+      return '<th data-sort="' + key + '" class="sortable">' + SORT_LABELS[key] + arrow + '</th>';
+    }
+    var html = '<div class="tbl-tools"><input type="search" id="segSearch" placeholder="Search name or email…" value="' +
+      escapeHtml(state.segQuery) + '" aria-label="Search customers"></div>';
+    html += '<table><tr>' + th('name') + th('email') + th('lastPurchase') + th('totalSpent') + th('segment') + '</tr>';
     rows.forEach(function (c) {
+      var supp = W.isSuppressed(state.suppressions, c.email) ? ' <span class="hint">(suppressed)</span>' : '';
       html += '<tr><td>' + escapeHtml(c.name || '—') + '</td><td>' + escapeHtml(c.email) +
         '</td><td>' + escapeHtml(c.lastPurchase || 'unknown') + '</td><td>$' + c.totalSpent.toFixed(0) +
-        '</td><td><span class="pill ' + c.segment + '">' + c.segmentLabel + '</span></td></tr>';
+        '</td><td><span class="pill ' + c.segment + '">' + c.segmentLabel + '</span>' + supp + '</td></tr>';
     });
-    tbl.innerHTML = html + '</table>';
+    tbl.innerHTML = html + '</table>' +
+      (rows.length ? '' : '<p class="hint">No customers match this search.</p>');
+    $('segSearch').addEventListener('input', function (e) {
+      state.segQuery = e.target.value;
+      renderSegments();
+      var s = $('segSearch');
+      s.focus();
+      s.setSelectionRange(s.value.length, s.value.length);
+    });
+    tbl.querySelectorAll('[data-sort]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        var key = el.getAttribute('data-sort');
+        if (state.segSort.key === key) {
+          state.segSort.dir = state.segSort.dir === 'asc' ? 'desc' : 'asc';
+        } else {
+          state.segSort = { key: key, dir: 'asc' };
+        }
+        renderSegments();
+      });
+    });
   }
 
   /* Campaign */
@@ -166,10 +201,12 @@
     var biz = $('bizName').value.trim() || 'our store';
     var tone = $('toneSel').value;
     var aov = parseFloat($('roiAov').value) || 75;
-    var camp = W.generateCampaign(seg, biz, tone, aov);
+    var camp = W.generateCampaign(seg, biz, tone, aov, state.offers);
+    var custom = state.offers[seg] || {};
 
     var inSeg = state.customers.filter(function (c) { return c.segment === seg; });
-    var preview = inSeg.slice(0, 3).map(function (c) {
+    var sendable = inSeg.filter(function (c) { return !W.isSuppressed(state.suppressions, c.email); });
+    var preview = sendable.slice(0, 3).map(function (c) {
       var p = W.personalize(camp, c);
       return '<div class="draft"><h4>Preview — ' + escapeHtml(c.email) +
         ' <button class="btn small ghost copybtn" data-copy="email">Copy email</button></h4>' +
@@ -179,7 +216,17 @@
     out.innerHTML =
       '<div class="note"><b>Offer:</b> ' + escapeHtml(camp.offer.value) +
       ' <span class="hint">— ' + escapeHtml(camp.offer.rationale) + '</span><br>' +
-      '<b>' + inSeg.length + '</b> customers in this segment.</div>' +
+      '<b>' + inSeg.length + '</b> customers in this segment' +
+      (sendable.length !== inSeg.length ? ' · <b>' + sendable.length + '</b> sendable (' + (inSeg.length - sendable.length) + ' suppressed)' : '') +
+      '.</div>' +
+      '<div class="btnrow"><button class="btn small" id="segCsvBtn">Export segment CSV</button></div>' +
+      '<details class="offeredit"><summary>Customize this segment\'s offer</summary>' +
+      '<div class="row"><div><label>Offer text</label><input type="text" id="offerVal" value="' +
+      escapeHtml(custom.value || '') + '" placeholder="e.g. 20% off, this week only"></div></div>' +
+      '<div class="row"><div><label>Why this offer (shown under the offer)</label><input type="text" id="offerWhy" value="' +
+      escapeHtml(custom.rationale || '') + '" placeholder="Optional rationale"></div></div>' +
+      '<div class="btnrow"><button class="btn small" id="offerSave">Save offer</button>' +
+      '<button class="btn small ghost" id="offerClear">Reset to default</button></div></details>' +
       '<div class="draft"><h4>Subject lines <button class="btn small ghost copybtn" data-copy="subjects">Copy</button></h4><ul class="subjects">' +
       camp.subjects.map(function (s) { return '<li>' + escapeHtml(s) + '</li>'; }).join('') + '</ul></div>' +
       '<div class="draft"><h4>Email template ({name} = first name) <button class="btn small ghost copybtn" data-copy="email">Copy</button></h4>' +
@@ -190,6 +237,26 @@
       '<div class="note"><b>Send checklist:</b> 1) Copy the email into your email tool (Mailchimp, Gmail…) and send to this segment. ' +
       '2) Follow up by SMS 3 days later to non-openers. 3) Log every send in the Tracking tab. 4) Don\'t email the same person twice in 14 days.</div>';
 
+    $('segCsvBtn').addEventListener('click', function () {
+      var res = W.segmentToCSV(state.customers, seg, state.suppressions);
+      if (!res.count) { alert('Nobody sendable in this segment.'); return; }
+      var blob = new Blob([res.csv], { type: 'text/csv' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'winback-' + seg + '.csv';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    });
+    $('offerSave').addEventListener('click', function () {
+      var val = $('offerVal').value.trim();
+      if (!val) { alert('Enter the offer text first.'); return; }
+      state.offers[seg] = { value: val, rationale: $('offerWhy').value.trim() };
+      save(); renderCampaign();
+    });
+    $('offerClear').addEventListener('click', function () {
+      delete state.offers[seg];
+      save(); renderCampaign();
+    });
+
     out.querySelectorAll('[data-copy]').forEach(function (btn) {
       btn.addEventListener('click', function () {
         var kind = btn.getAttribute('data-copy');
@@ -197,7 +264,7 @@
         // personalized copy buttons inside previews copy that preview's email
         if (btn.closest('.draft') && btn.closest('.draft').querySelector('h4').textContent.indexOf('Preview') === 0) {
           var idx = Array.prototype.indexOf.call(out.querySelectorAll('.draft'), btn.closest('.draft'));
-          var cust = inSeg[idx - 3]; // 3 template drafts come first
+          var cust = sendable[idx - 3]; // 3 template drafts come first
           if (cust) text = W.personalize(camp, cust).email;
         }
         copyText(btn, text);
@@ -210,39 +277,80 @@
     var email = $('trkEmail').value.trim().toLowerCase();
     if (!W.validateEmail(email)) { alert('Enter a valid email.'); return; }
     var cust = state.customers.find(function (c) { return c.email === email; });
+    var result = $('trkResult').value;
     state.tracking.unshift({
       email: email,
       name: cust ? cust.name : '',
       segment: cust ? cust.segmentLabel : '—',
       date: $('trkDate').value || new Date().toISOString().slice(0, 10),
       channel: $('trkChannel').value,
-      result: $('trkResult').value
+      result: result,
+      followUp: $('trkFollow').value || ''
     });
+    if (result === 'unsub') {
+      state.suppressions = W.suppressEmail(state.suppressions, email);
+    }
     $('trkEmail').value = '';
-    save(); renderTracking(); renderHeadStats();
+    $('trkFollow').value = '';
+    save(); renderTracking(); renderHeadStats(); renderSegments(); renderCampaign();
   });
 
   $('trkExport').addEventListener('click', function () {
-    var csv = 'email,name,segment,date,channel,result\n' + state.tracking.map(function (t) {
-      return [t.email, '"' + (t.name || '').replace(/"/g, '""') + '"', t.segment, t.date, t.channel, t.result].join(',');
+    var csv = 'email,name,segment,date,channel,result,follow_up\n' + state.tracking.map(function (t) {
+      return [t.email, '"' + (t.name || '').replace(/"/g, '""') + '"', t.segment, t.date, t.channel, t.result, t.followUp || ''].join(',');
     }).join('\n');
     var blob = new Blob([csv], { type: 'text/csv' });
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = 'winback-tracking.csv'; a.click();
   });
 
+  function renderSuppressionList(box) {
+    if (!state.suppressions.length) return '';
+    return '<div class="note"><b>Suppression list (' + state.suppressions.length + '):</b> ' +
+      'these emails are excluded from segment exports and previews.' +
+      '<div class="supp-list">' + state.suppressions.map(function (e) {
+        return '<span class="supp">' + escapeHtml(e) +
+          ' <button class="btn small ghost unsupp" data-email="' + escapeHtml(e) + '">remove</button></span>';
+      }).join('') + '</div></div>';
+  }
+
   function renderTracking() {
     var el = $('trkTable');
-    if (!state.tracking.length) { el.innerHTML = '<p class="hint">Nothing logged yet.</p>'; return; }
+    var due = W.followUpsDue(state.tracking);
+    var html = '';
+    if (due.length) {
+      html += '<div class="note due"><b>⏰ ' + due.length + ' follow-up' + (due.length === 1 ? '' : 's') +
+        ' due:</b> ' + due.slice(0, 5).map(function (t) {
+          return escapeHtml(t.email) + ' (' + escapeHtml(t.followUp) + ')';
+        }).join(' · ') + (due.length > 5 ? ' · …' : '') + '</div>';
+    }
+    if (!state.tracking.length) {
+      el.innerHTML = html + '<p class="hint">Nothing logged yet.</p>' + renderSuppressionList();
+      bindUnsupp(el);
+      return;
+    }
     var won = state.tracking.filter(function (t) { return t.result === 'won'; }).length;
-    var html = '<p class="ok"><b>' + state.tracking.length + '</b> contacts logged · <b>' + won + '</b> won back 🎉</p>';
-    html += '<table><tr><th>Email</th><th>Segment</th><th>Date</th><th>Channel</th><th>Result</th></tr>';
+    html += '<p class="ok"><b>' + state.tracking.length + '</b> contacts logged · <b>' + won + '</b> won back 🎉</p>';
+    html += '<table><tr><th>Email</th><th>Segment</th><th>Date</th><th>Channel</th><th>Result</th><th>Follow-up</th></tr>';
+    var today = W.todayISO();
     state.tracking.forEach(function (t) {
+      var dueMark = (t.followUp && t.followUp <= today && t.result !== 'won' && t.result !== 'unsub')
+        ? ' <span class="pill lost">due</span>' : '';
       html += '<tr><td>' + escapeHtml(t.email) + '</td><td>' + escapeHtml(t.segment) +
         '</td><td>' + escapeHtml(t.date) + '</td><td>' + escapeHtml(t.channel) +
-        '</td><td>' + escapeHtml(t.result) + '</td></tr>';
+        '</td><td>' + escapeHtml(t.result) + '</td><td>' + escapeHtml(t.followUp || '—') + dueMark + '</td></tr>';
     });
-    el.innerHTML = html + '</table>';
+    el.innerHTML = html + '</table>' + renderSuppressionList();
+    bindUnsupp(el);
+  }
+
+  function bindUnsupp(root) {
+    root.querySelectorAll('.unsupp').forEach(function (b) {
+      b.addEventListener('click', function () {
+        state.suppressions = W.unsuppressEmail(state.suppressions, b.getAttribute('data-email'));
+        save(); renderTracking(); renderSegments(); renderCampaign(); renderHeadStats();
+      });
+    });
   }
 
   /* ROI */

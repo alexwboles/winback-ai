@@ -193,6 +193,31 @@ footer { text-align: center; color: var(--muted); font-size: 13px; padding: 0 20
 }
 
 /* ---------- responsive ---------- */
+/* ---------- customer table tools ---------- */
+.tbl-tools { margin: 14px 0 4px; }
+.tbl-tools input[type="search"] {
+  width: 100%; max-width: 340px; font: inherit; font-size: 14px; padding: 10px 13px;
+  border: 1px solid var(--line); border-radius: 0; background: #fff; color: var(--ink);
+}
+.tbl-tools input[type="search"]:focus { outline: none; border-color: var(--coral); }
+th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+th.sortable:hover { color: var(--coral-deep); }
+
+/* ---------- offer editor ---------- */
+.offeredit { margin: 12px 0; border: 1px dashed var(--line); border-radius: 0; padding: 12px 16px; }
+.offeredit summary { cursor: pointer; font-weight: 650; font-size: 14px; color: var(--coral-deep); }
+.offeredit .row { margin-top: 10px; }
+.offeredit .btnrow { margin-top: 10px; }
+
+/* ---------- suppression list + follow-ups ---------- */
+.supp-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.supp {
+  display: inline-flex; align-items: center; gap: 8px; font-size: 13px;
+  background: #fff; border: 1px solid var(--line); border-radius: 0; padding: 6px 6px 6px 12px;
+}
+.supp .btn { margin: 0; }
+.note.due { border-left: 4px solid var(--coral); }
+
 @media (max-width: 720px) {
   .bar-inner { padding: 24px 20px 20px; }
   .bar-inner h1 { font-size: 28px; }
