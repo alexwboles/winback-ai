@@ -140,6 +140,34 @@ for n in segSearch segCsvBtn offerVal offerSave offerClear trkFollow sortCustome
 done
 [ -z "$missing" ] && ok "UI wires search/sort/export/suppression/offers/followup" || bad "missing wiring:$missing"
 
+
+# 13c: UI wiring — win score, sends, merge tags
+missing=""
+for n in winScore logSend campaignStats scoreBadge sendSeg sendAdd sendPerf SORT_LABELS; do
+  grep -q "th('score')" js/app.js || missing="$missing th-score"
+  grep -q "$n" index.html js/app.js js/logic.js || missing="$missing $n"
+done
+[ -z "$missing" ] && ok "UI wires win-score/sends/merge-tags" || bad "missing wiring:$missing"
+
+node << 'EOF'
+const W = require('/home/hatch/workspace/winback-ai/js/logic.js');
+let pass = 0, fail = 0;
+const ok = (m) => { pass++; console.log('  PASS: ' + m); };
+const bad = (m) => { fail++; console.log('  FAIL: ' + m); };
+const seg = W.segmentCustomers([{ name: 'A', email: 'a@x.com', lastPurchase: '2026-09-10', totalSpent: 1240, orders: 9 }], '2026-09-27');
+(typeof seg[0].score === 'number' && seg[0].score >= 0 && seg[0].score <= 100) ? ok('segmentCustomers attaches 0-100 win score') : bad('score=' + seg[0].score);
+const sends = W.logSend([], { segment: 'champions', channel: 'Email', count: 10, date: '2026-09-20' });
+const st = W.campaignStats(seg, sends, [{ email: 'a@x.com', result: 'won' }]);
+(st.length === 1 && st[0].sent === 10 && st[0].won === 1 && st[0].winRate === 100) ? ok('campaignStats joins sends + tracking') : bad('stats=' + JSON.stringify(st));
+const camp = W.generateCampaign('champions', 'Biz', 'warm', 75, {});
+const pz = W.personalize(Object.assign({}, camp, { email: '{total_spent} {last_purchase} {segment}' }),
+  { name: 'A', lastPurchase: '2026-09-10', totalSpent: 1240, segmentLabel: 'Champions' });
+(pz.email === '$1240 2026-09-10 Champions') ? ok('merge tags {total_spent} {last_purchase} {segment}') : bad('got: ' + pz.email);
+console.log('node checks: ' + pass + ' passed, ' + fail + ' failed');
+process.exit(fail ? 1 : 0);
+EOF
+[ $? -eq 0 ] && ok "node win-score/sends/merge-tag checks" || bad "node win-score/sends/merge-tag checks"
+
 echo ""
 echo "smoke: $PASS passed, $FAIL failed"
 exit $FAIL

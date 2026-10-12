@@ -99,6 +99,21 @@
       </div>
       <div id="trkTable"></div>
     </div>
+    <div class="card">
+      <p class="kicker">Step 4b — campaign performance</p>
+      <h2>Log a send &amp; see what worked</h2>
+      <p class="sub">Record each campaign blast, then compare win-back rates by segment.</p>
+      <div class="row">
+        <div><label>Segment</label><select id="sendSeg"></select></div>
+        <div><label>Channel</label><select id="sendChannel"><option>Email</option><option>SMS</option><option>Phone</option></select></div>
+        <div><label>Sent to (count)</label><input type="number" id="sendCount" min="1" placeholder="e.g. 120"></div>
+        <div><label>Date</label><input type="date" id="sendDate"></div>
+      </div>
+      <div class="btnrow">
+        <button class="btn" id="sendAdd">Log send</button>
+      </div>
+      <div id="sendPerf"></div>
+    </div>
   </div>
 
   <!-- ROI -->

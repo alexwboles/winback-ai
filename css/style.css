@@ -230,3 +230,12 @@ th.sortable:hover { color: var(--coral-deep); }
   .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .btn { margin-right: 8px; }
 }
+
+/* ---------- feature batch: win score + performance table ---------- */
+.score {
+  display: inline-block; min-width: 30px; text-align: center;
+  font-weight: 700; font-size: 13px; padding: 2px 8px; border-radius: 0; color: #fff;
+}
+.score.hi { background: #2e7d32; }
+.score.mid { background: #b07d10; }
+.score.lo { background: #8a8f98; }

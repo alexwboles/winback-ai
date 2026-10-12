@@ -167,9 +167,21 @@
         name: c.name, email: c.email, lastPurchase: c.lastPurchase,
         totalSpent: spent, orders: c.orders || 1,
         recencyDays: rec, segment: seg,
-        segmentLabel: SEGMENTS[seg].label
+        segmentLabel: SEGMENTS[seg].label,
+        score: winScore({ recencyDays: rec, totalSpent: spent, orders: c.orders || 1 })
       };
     });
+  }
+
+  /* Win score 0-100: how likely is this customer to come back?
+     Recency (40) + spend (35) + frequency (25). */
+  function winScore(c) {
+    var rec = c.recencyDays;
+    var recScore = (rec === null || rec === undefined) ? 8
+      : rec <= 60 ? 40 : rec <= 90 ? 32 : rec <= 180 ? 22 : rec <= 365 ? 12 : 5;
+    var spendScore = Math.min(35, Math.round((c.totalSpent || 0) / 50));
+    var freqScore = Math.min(25, (c.orders || 1) * 5);
+    return Math.max(0, Math.min(100, recScore + spendScore + freqScore));
   }
 
   function firstName(full) {
@@ -308,14 +320,77 @@
     };
   }
 
-  /* Personalize a campaign template for one customer. */
+  /* Personalize a campaign template for one customer.
+     Supported merge tags: {name} {offer} {biz} {last_purchase} {total_spent} {segment} */
   function personalize(campaign, customer) {
-    var vars = { name: firstName(customer.name) };
+    var vars = {
+      name: firstName(customer.name),
+      last_purchase: customer.lastPurchase || 'a while ago',
+      total_spent: '$' + Math.round(customer.totalSpent || 0),
+      segment: customer.segmentLabel || ''
+    };
     return {
       subjects: campaign.subjects.map(function (s) { return fill(s, vars); }),
       email: fill(campaign.email, vars),
       sms: fill(campaign.sms, vars)
     };
+  }
+
+  /* ---------- campaign performance: sends log + results per segment ----------
+     sends: [{segment, channel, count, date}]. tracking: [{email, result, ...}].
+     Tracking entries join to segments via the customer's email. */
+  function logSend(sends, entry) {
+    var out = (sends || []).slice();
+    out.unshift({
+      segment: entry.segment,
+      channel: entry.channel || 'Email',
+      count: Math.max(0, Number(entry.count) || 0),
+      date: entry.date || wbTodayISO()
+    });
+    return out;
+  }
+
+  function segmentKeyFromLabel(label) {
+    var keys = Object.keys(SEGMENTS);
+    for (var i = 0; i < keys.length; i++) {
+      if (SEGMENTS[keys[i]].label === label) return keys[i];
+    }
+    return null;
+  }
+
+  function campaignStats(customers, sends, tracking) {
+    var byEmail = {};
+    (customers || []).forEach(function (c) {
+      byEmail[String(c.email || '').trim().toLowerCase()] = c.segment;
+    });
+    var stats = {};
+    function row(seg) {
+      if (!stats[seg]) {
+        stats[seg] = {
+          segment: seg, label: (SEGMENTS[seg] || {}).label || seg,
+          sent: 0, contacted: 0, responded: 0, won: 0, winRate: 0
+        };
+      }
+      return stats[seg];
+    }
+    (sends || []).forEach(function (s) {
+      if (SEGMENTS[s.segment]) row(s.segment).sent += Math.max(0, Number(s.count) || 0);
+    });
+    (tracking || []).forEach(function (t) {
+      var seg = byEmail[String(t.email || '').trim().toLowerCase()] ||
+        segmentKeyFromLabel(t.segment);
+      if (!seg || !SEGMENTS[seg]) return;
+      var r = row(seg);
+      r.contacted++;
+      if (t.result === 'opened' || t.result === 'won') r.responded++;
+      if (t.result === 'won') r.won++;
+    });
+    var out = Object.keys(stats).map(function (k) { return stats[k]; });
+    out.forEach(function (r) {
+      r.winRate = r.contacted ? Math.round((r.won / r.contacted) * 1000) / 10 : 0;
+    });
+    out.sort(function (a, b) { return b.won - a.won || b.responded - a.responded; });
+    return out;
   }
 
   /* ROI estimator. Assumptions are editable; defaults are honest industry-ish guesses. */
@@ -388,14 +463,14 @@
   }
 
   /* ---------- customer table: search + sort ---------- */
-  var SORT_KEYS = ['name', 'email', 'lastPurchase', 'totalSpent', 'segment'];
+  var SORT_KEYS = ['name', 'email', 'lastPurchase', 'totalSpent', 'segment', 'score'];
 
   function sortCustomers(customers, key, dir) {
     if (SORT_KEYS.indexOf(key) === -1) key = 'name';
     var d = (dir === 'desc') ? -1 : 1;
     return (customers || []).slice().sort(function (a, b) {
       var av = a[key], bv = b[key];
-      if (key === 'totalSpent') {
+      if (key === 'totalSpent' || key === 'score') {
         av = Number(av) || 0; bv = Number(bv) || 0;
       } else if (key === 'segment') {
         av = ((SEGMENTS[a.segment] || {}).priority) || 99;
@@ -502,6 +577,10 @@
     activeCustomers: activeCustomers,
     segmentToCSV: segmentToCSV,
     followUpsDue: followUpsDue,
+    winScore: winScore,
+    logSend: logSend,
+    campaignStats: campaignStats,
+    segmentKeyFromLabel: segmentKeyFromLabel,
     todayISO: wbTodayISO
   };
 });

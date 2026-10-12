@@ -8,6 +8,7 @@
     customers: [],      // segmented
     segSel: 'vip-dormant',
     tracking: [],
+    sends: [],          // campaign sends: {segment, channel, count, date}
     suppressions: [],   // do-not-contact emails (lowercased)
     offers: {},         // custom per-segment offers: {seg: {value, rationale}}
     segQuery: '',
@@ -20,12 +21,14 @@
       if (s.bizName) $('bizName').value = s.bizName;
       if (s.tone) $('toneSel').value = s.tone;
       if (s.tracking) state.tracking = s.tracking;
+      if (s.sends) state.sends = s.sends;
       if (s.suppressions) state.suppressions = s.suppressions;
       if (s.offers) state.offers = s.offers;
       if (s.customers && s.customers.length) {
         state.customers = s.customers;
         renderSegments(); renderSegSelect(); renderCampaign(); renderTracking();
       }
+      renderSendSeg();
       renderHeadStats();
     } catch (e) { /* fresh start */ }
   }
@@ -33,7 +36,7 @@
     try {
       localStorage.setItem('winback-ai', JSON.stringify({
         bizName: $('bizName').value, tone: $('toneSel').value,
-        customers: state.customers, tracking: state.tracking,
+        customers: state.customers, tracking: state.tracking, sends: state.sends,
         suppressions: state.suppressions, offers: state.offers
       }));
     } catch (e) { /* storage full/blocked */ }
@@ -108,10 +111,20 @@
   }
 
   /* Segments */
-  var SORT_LABELS = { name: 'Customer', email: 'Email', lastPurchase: 'Last purchase', totalSpent: 'Spent', segment: 'Segment' };
+  var SORT_LABELS = { name: 'Customer', email: 'Email', lastPurchase: 'Last purchase', totalSpent: 'Spent', segment: 'Segment', score: 'Win score' };
+
+  function scoreBadge(c) {
+    var s = (c.score === null || c.score === undefined) ? W.winScore(c) : c.score;
+    var cls = s >= 70 ? 'hi' : s >= 40 ? 'mid' : 'lo';
+    return '<span class="score ' + cls + '" title="Likelihood to come back (0-100)">' + s + '</span>';
+  }
 
   function renderSegments() {
     var grid = $('segGrid'), tbl = $('segTable');
+    // backfill win scores for lists imported before scores existed
+    state.customers.forEach(function (c) {
+      if (c.score === null || c.score === undefined) c.score = W.winScore(c);
+    });
     var counts = W.segmentCounts(state.customers);
     var order = Object.keys(W.SEGMENTS).sort(function (a, b) {
       return W.SEGMENTS[a].priority - W.SEGMENTS[b].priority;
@@ -139,12 +152,13 @@
     }
     var html = '<div class="tbl-tools"><input type="search" id="segSearch" placeholder="Search name or email…" value="' +
       escapeHtml(state.segQuery) + '" aria-label="Search customers"></div>';
-    html += '<table><tr>' + th('name') + th('email') + th('lastPurchase') + th('totalSpent') + th('segment') + '</tr>';
+    html += '<table><tr>' + th('name') + th('email') + th('lastPurchase') + th('totalSpent') + th('segment') + th('score') + '</tr>';
     rows.forEach(function (c) {
       var supp = W.isSuppressed(state.suppressions, c.email) ? ' <span class="hint">(suppressed)</span>' : '';
       html += '<tr><td>' + escapeHtml(c.name || '—') + '</td><td>' + escapeHtml(c.email) +
         '</td><td>' + escapeHtml(c.lastPurchase || 'unknown') + '</td><td>$' + c.totalSpent.toFixed(0) +
-        '</td><td><span class="pill ' + c.segment + '">' + c.segmentLabel + '</span>' + supp + '</td></tr>';
+        '</td><td><span class="pill ' + c.segment + '">' + c.segmentLabel + '</span>' + supp +
+        '</td><td>' + scoreBadge(c) + '</td></tr>';
     });
     tbl.innerHTML = html + '</table>' +
       (rows.length ? '' : '<p class="hint">No customers match this search.</p>');
@@ -229,7 +243,8 @@
       '<button class="btn small ghost" id="offerClear">Reset to default</button></div></details>' +
       '<div class="draft"><h4>Subject lines <button class="btn small ghost copybtn" data-copy="subjects">Copy</button></h4><ul class="subjects">' +
       camp.subjects.map(function (s) { return '<li>' + escapeHtml(s) + '</li>'; }).join('') + '</ul></div>' +
-      '<div class="draft"><h4>Email template ({name} = first name) <button class="btn small ghost copybtn" data-copy="email">Copy</button></h4>' +
+      '<div class="draft"><h4>Email template <button class="btn small ghost copybtn" data-copy="email">Copy</button></h4>' +
+      '<p class="hint">Merge tags: {name} = first name · {offer} = this segment\'s offer · {last_purchase} · {total_spent} · {segment}</p>' +
       escapeHtml(camp.email) + '</div>' +
       '<div class="draft"><h4>SMS template <button class="btn small ghost copybtn" data-copy="sms">Copy</button></h4>' +
       escapeHtml(camp.sms) + ' <span class="hint">(' + camp.sms.replace(/\{name\}/g, 'XXXX').length + ' chars)</span></div>' +
@@ -342,7 +357,47 @@
     });
     el.innerHTML = html + '</table>' + renderSuppressionList();
     bindUnsupp(el);
+    renderPerf();
   }
+
+  function renderPerf() {
+    var box = $('sendPerf');
+    if (!box) return;
+    var stats = W.campaignStats(state.customers, state.sends, state.tracking);
+    if (!stats.length) {
+      box.innerHTML = '<p class="hint">No sends logged yet — log a send above and results will appear here as you track contacts.</p>';
+      return;
+    }
+    var html = '<table><tr><th>Segment</th><th>Sent</th><th>Contacts logged</th><th>Responded</th><th>Won back</th><th>Win rate</th></tr>';
+    stats.forEach(function (r) {
+      html += '<tr><td><span class="pill">' + escapeHtml(r.label) + '</span></td><td>' + r.sent +
+        '</td><td>' + r.contacted + '</td><td>' + r.responded + '</td><td><b>' + r.won +
+        '</b></td><td>' + r.winRate + '%</td></tr>';
+    });
+    box.innerHTML = html + '</table>' +
+      '<p class="hint">Win rate = won ÷ contacts logged. Log contacts in the form above with matching customer emails to attribute results.</p>';
+  }
+
+  function renderSendSeg() {
+    var sel = $('sendSeg');
+    if (!sel) return;
+    sel.innerHTML = Object.keys(W.SEGMENTS).map(function (k) {
+      return '<option value="' + k + '">' + W.SEGMENTS[k].label + '</option>';
+    }).join('');
+  }
+
+  $('sendAdd').addEventListener('click', function () {
+    var count = Number($('sendCount').value) || 0;
+    if (count < 1) { alert('Enter how many customers this send went to.'); return; }
+    state.sends = W.logSend(state.sends, {
+      segment: $('sendSeg').value,
+      channel: $('sendChannel').value,
+      count: count,
+      date: $('sendDate').value || undefined
+    });
+    $('sendCount').value = '';
+    save(); renderPerf(); renderHeadStats();
+  });
 
   function bindUnsupp(root) {
     root.querySelectorAll('.unsupp').forEach(function (b) {

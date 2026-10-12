@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# WinBack AI end-to-end tests — 8 flows exercised in Node against js/logic.js.
+# WinBack AI end-to-end tests — 16 flows exercised in Node against js/logic.js.
 set -u
 cd "$(dirname "$0")/.."
 
@@ -100,6 +100,44 @@ const trk = [
 const due = W.followUpsDue(trk, NOW);
 (due.length === 1 && due[0].email === 'ava@example.com')
   ? ok('flow12: 1 follow-up due today; future + won excluded') : bad('flow12 due');
+
+console.log('');
+
+// Flow 13: win score 0-100 from recency x spend x frequency
+const avaS = seg.find(c => c.email === 'ava@example.com');
+const lucasS = seg.find(c => c.email === 'lucas@example.com');
+(avaS && avaS.score >= 70 && ava.score <= 100) ? ok('flow13: Ava (recent, $1240, 9 orders) scores high: ' + ava.score) : bad('flow13 ava=' + (ava && ava.score));
+(lucasS && lucasS.score < avaS.score) ? ok('flow13: Lucas (old, $60, 1 order) scores lower: ' + lucasS.score) : bad('flow13 lucas=' + (lucasS && lucasS.score));
+(W.winScore({ recencyDays: 30, totalSpent: 2000, orders: 10 }) === 100) ? ok('flow13: ceiling clamps at 100') : bad('flow13 ceiling');
+(W.winScore({ recencyDays: null, totalSpent: 0, orders: 1 }) < 25) ? ok('flow13: unknown recency scores low') : bad('flow13 unknown');
+
+// Flow 14: win score is a sortable table column
+const byScore = W.sortCustomers(seg, 'score', 'desc');
+(byScore[0].score >= byScore[byScore.length - 1].score) ? ok('flow14: sort by score desc orders correctly') : bad('flow14 sort');
+
+// Flow 15: extra merge tags personalize drafts
+const tagCamp = W.generateCampaign('champions', 'Biz', 'warm', 75, {});
+const tagged = W.personalize(Object.assign({}, tagCamp, { email: 'Hi {name}, you spent {total_spent} on {last_purchase} ({segment}).' }),
+  { name: 'Ava Martinez', lastPurchase: '2026-09-10', totalSpent: 1240, segmentLabel: 'Champions' });
+(tagged.email === 'Hi Ava, you spent $1240 on 2026-09-10 (Champions).')
+  ? ok('flow15: {total_spent}/{last_purchase}/{segment} filled in') : bad('flow15 got: ' + tagged.email);
+
+// Flow 16: campaign performance — sends + tracking join by segment
+let sends = W.logSend([], { segment: 'vip-dormant', channel: 'Email', count: 40, date: '2026-09-20' });
+sends = W.logSend(sends, { segment: 'lapsed', channel: 'SMS', count: 60, date: '2026-09-21' });
+const trk2 = [
+  { email: 'emma@example.com', result: 'won' },
+  { email: 'emma@example.com', result: 'opened' },
+  { email: 'noah@example.com', result: 'ignored' }
+];
+const stats = W.campaignStats(seg, sends, trk2);
+const vip = stats.find(r => r.segment === 'vip-dormant');
+const lap = stats.find(r => r.segment === 'lapsed');
+(vip && vip.sent === 40 && vip.won === 1 && vip.contacted === 2 && vip.responded === 2)
+  ? ok('flow16: vip-dormant stats join correctly') : bad('flow16 vip=' + JSON.stringify(vip));
+(lap && lap.sent === 60 && lap.won === 0 && lap.contacted === 1)
+  ? ok('flow16: lapsed stats correct') : bad('flow16 lap=' + JSON.stringify(lap));
+(vip && vip.winRate === 50) ? ok('flow16: win rate 50% (1 won / 2 contacted)') : bad('flow16 winRate=' + (vip && vip.winRate));
 
 console.log('');
 console.log('e2e: ' + pass + ' passed, ' + fail + ' failed');
