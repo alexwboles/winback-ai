@@ -239,3 +239,44 @@ th.sortable:hover { color: var(--coral-deep); }
 .score.hi { background: #2e7d32; }
 .score.mid { background: #b07d10; }
 .score.lo { background: #8a8f98; }
+
+/* ---------- redesign: strike-list leaderboard ---------- */
+.leaderboard { margin-top: 26px; border-top: 4px solid var(--coral); }
+.lb { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 10px; }
+.lb li {
+  display: grid; grid-template-columns: 44px 1fr auto; gap: 16px; align-items: center;
+  background: #fff; border: 1px solid var(--line); padding: 14px 16px;
+}
+.lb li:first-child { border-left: 5px solid var(--coral); }
+.lb-rank {
+  font-family: var(--serif); font-size: 26px; font-weight: 600; color: var(--coral-deep);
+  text-align: center; font-variant-numeric: tabular-nums;
+}
+.lb-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.lb-top strong { font-size: 15.5px; }
+.lb-bars { display: flex; align-items: center; gap: 10px; margin-top: 7px; }
+.lb-bar { flex: 1; max-width: 220px; height: 7px; background: var(--line-soft); }
+.lb-bar i { display: block; height: 100%; background: var(--coral); }
+.lb-bar.ev i { background: #2e7d32; }
+.lb-cap { font-size: 11.5px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+.lb-money { text-align: right; min-width: 92px; }
+.lb-money b { display: block; font-family: var(--serif); font-size: 22px; color: var(--coral-deep); font-variant-numeric: tabular-nums; }
+
+/* ---------- redesign: segment money ---------- */
+.seg-money {
+  display: flex; flex-direction: column; gap: 2px; margin: 8px 0 6px;
+  font-size: 13px; color: var(--ink-soft);
+}
+.seg-money b { font-variant-numeric: tabular-nums; }
+.seg-money .rec b { color: #2e7d32; }
+
+/* ---------- redesign: campaign two-pane composer ---------- */
+.cmp-grid { display: grid; grid-template-columns: 340px 1fr; gap: 22px; align-items: start; margin-top: 14px; }
+.cmp-left .note { margin-top: 0; }
+.cmp-right .kicker { margin-bottom: 4px; }
+@media (max-width: 860px) {
+  .cmp-grid { grid-template-columns: 1fr; }
+  .lb li { grid-template-columns: 34px 1fr; }
+  .lb-money { grid-column: 2; text-align: left; }
+  .lb-money b { display: inline; margin-right: 8px; }
+}

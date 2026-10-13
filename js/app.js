@@ -130,12 +130,34 @@
       return W.SEGMENTS[a].priority - W.SEGMENTS[b].priority;
     });
     grid.innerHTML = '';
+    // $ at stake + expected recoverable per segment (non-suppressed, win-backable)
+    var stake = {}, recover = {}, sendable = {};
+    state.customers.forEach(function (c) {
+      var key = c.segment;
+      if (!SEGMENTS_SAFE(key)) return;
+      if (W.isSuppressed(state.suppressions, c.email)) return;
+      sendable[key] = (sendable[key] || 0) + 1;
+      if (key === 'champions' || key === 'unknown') return;
+      var spent = Number(c.totalSpent) || 0;
+      var s = Number(c.score) || 0;
+      stake[key] = (stake[key] || 0) + spent;
+      recover[key] = (recover[key] || 0) + Math.round(s * spent) / 100;
+    });
+    function SEGMENTS_SAFE(k) { return !!W.SEGMENTS[k]; }
     order.forEach(function (key) {
       var n = counts[key] || 0;
       var d = document.createElement('div');
       d.className = 'seg-card' + (state.segSel === key ? ' sel' : '');
+      var moneyHtml = '';
+      if (stake[key] > 0) {
+        moneyHtml = '<div class="seg-money"><span><b>$' + Math.round(stake[key]).toLocaleString('en-US') +
+          '</b> at stake</span><span class="rec"><b>$' + Math.round(recover[key] || 0).toLocaleString('en-US') +
+          '</b> recoverable</span></div>';
+      } else if (sendable[key] > 0) {
+        moneyHtml = '<div class="seg-money"><span>' + sendable[key] + ' sendable</span></div>';
+      }
       d.innerHTML = '<h3><span class="pill ' + key + '">' + W.SEGMENTS[key].label + '</span></h3>' +
-        '<div class="count">' + n + '</div><p>' + W.SEGMENTS[key].blurb + '</p>';
+        '<div class="count">' + n + '</div>' + moneyHtml + '<p>' + W.SEGMENTS[key].blurb + '</p>';
       d.addEventListener('click', function () {
         state.segSel = key; renderSegments(); renderSegSelect(); renderCampaign(); goTab('campaign');
       });
@@ -189,14 +211,25 @@
     if (!box) return;
     var tops = W.rankTargets(state.customers, state.suppressions, 10);
     if (!tops.length) { box.innerHTML = ''; return; }
-    var html = '<div class="note"><b>Top win-back targets</b> <span class="hint">— ranked by expected value (win score × lifetime spend). Contact these first.</span>' +
-      '<table><tr><th></th><th>Name</th><th>Segment</th><th>Win score</th><th>Lifetime spend</th><th>Expected value</th></tr>';
+    var maxEV = Math.max.apply(null, tops.map(function (t) { return t.expectedValue; })) || 1;
+    var html = '<div class="card leaderboard"><p class="kicker">Strike list</p>' +
+      '<h2>Top win-back targets</h2>' +
+      '<p class="sub">Ranked by expected value (win score × lifetime spend). Contact these first.</p>' +
+      '<ol class="lb">';
     tops.forEach(function (t, i) {
-      html += '<tr><td>' + (i + 1) + '</td><td>' + escapeHtml(t.name || '—') + '<br><span class="hint">' + escapeHtml(t.email) + '</span></td>' +
-        '<td><span class="pill ' + t.segment + '">' + escapeHtml(t.segmentLabel) + '</span></td>' +
-        '<td>' + t.score + '</td><td>$' + t.totalSpent.toFixed(0) + '</td><td><b>$' + t.expectedValue.toFixed(0) + '</b></td></tr>';
+      html += '<li><span class="lb-rank">' + (i + 1) + '</span>' +
+        '<div class="lb-main"><div class="lb-top"><strong>' + escapeHtml(t.name || '—') + '</strong>' +
+        ' <span class="pill ' + t.segment + '">' + escapeHtml(t.segmentLabel) + '</span></div>' +
+        '<div class="hint">' + escapeHtml(t.email) + '</div>' +
+        '<div class="lb-bars"><div class="lb-bar"><i style="width:' + Math.round(t.score) + '%"></i></div>' +
+        '<span class="lb-cap">win score ' + t.score + '</span></div>' +
+        '<div class="lb-bars"><div class="lb-bar ev"><i style="width:' +
+        Math.max(2, Math.round(t.expectedValue / maxEV * 100)) + '%"></i></div>' +
+        '<span class="lb-cap">expected value</span></div></div>' +
+        '<div class="lb-money"><b>$' + t.expectedValue.toFixed(0) + '</b>' +
+        '<span class="hint">$' + t.totalSpent.toFixed(0) + ' lifetime</span></div></li>';
     });
-    box.innerHTML = html + '</table></div>';
+    box.innerHTML = html + '</ol></div>';
   }
 
   /* Duplicate customers: same name, different emails — merge them. */
@@ -270,7 +303,7 @@
     }).join('');
 
     out.innerHTML =
-      '<div class="note"><b>Offer:</b> ' + escapeHtml(camp.offer.value) +
+      '<div class="cmp-grid"><div class="cmp-left"><div class="note"><b>Offer:</b> ' + escapeHtml(camp.offer.value) +
       ' <span class="hint">— ' + escapeHtml(camp.offer.rationale) + '</span><br>' +
       '<b>' + inSeg.length + '</b> customers in this segment' +
       (sendable.length !== inSeg.length ? ' · <b>' + sendable.length + '</b> sendable (' + (inSeg.length - sendable.length) + ' suppressed)' : '') +
@@ -288,6 +321,9 @@
       escapeHtml(custom.rationale || '') + '" placeholder="Optional rationale"></div></div>' +
       '<div class="btnrow"><button class="btn small" id="offerSave">Save offer</button>' +
       '<button class="btn small ghost" id="offerClear">Reset to default</button></div></details>' +
+      '<div class="note"><b>Send checklist:</b> 1) Copy the email into your email tool (Mailchimp, Gmail…) and send to this segment. ' +
+      '2) Follow up by SMS 3 days later to non-openers. 3) Log every send in the Tracking tab. 4) Don\'t email the same person twice in 14 days.</div>' +
+      '</div><div class="cmp-right"><p class="kicker">Live drafts</p>' +
       '<div class="draft"><h4>Subject lines <button class="btn small ghost copybtn" data-copy="subjects">Copy</button></h4><ul class="subjects">' +
       camp.subjects.map(function (s) { return '<li>' + escapeHtml(s) + '</li>'; }).join('') + '</ul></div>' +
       '<div class="draft"><h4>Email template <button class="btn small ghost copybtn" data-copy="email">Copy</button></h4>' +
@@ -296,8 +332,7 @@
       '<div class="draft"><h4>SMS template <button class="btn small ghost copybtn" data-copy="sms">Copy</button></h4>' +
       escapeHtml(camp.sms) + ' <span class="hint">(' + camp.sms.replace(/\{name\}/g, 'XXXX').length + ' chars)</span></div>' +
       (preview ? '<h3 style="margin-top:18px">Personalized previews</h3>' + preview : '<p class="hint">Import customers to see personalized previews.</p>') +
-      '<div class="note"><b>Send checklist:</b> 1) Copy the email into your email tool (Mailchimp, Gmail…) and send to this segment. ' +
-      '2) Follow up by SMS 3 days later to non-openers. 3) Log every send in the Tracking tab. 4) Don\'t email the same person twice in 14 days.</div>';
+      '</div></div>';
 
     $('segCsvBtn').addEventListener('click', function () {
       var res = W.segmentToCSV(state.customers, seg, state.suppressions);
