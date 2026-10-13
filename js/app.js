@@ -168,8 +168,7 @@
       var s = $('segSearch');
       s.focus();
       s.setSelectionRange(s.value.length, s.value.length);
-    });
-    tbl.querySelectorAll('[data-sort]').forEach(function (el) {
+    });    tbl.querySelectorAll('[data-sort]').forEach(function (el) {
       el.addEventListener('click', function () {
         var key = el.getAttribute('data-sort');
         if (state.segSort.key === key) {
@@ -178,6 +177,49 @@
           state.segSort = { key: key, dir: 'asc' };
         }
         renderSegments();
+      });
+    });
+    renderTargets();
+    renderDuplicates();
+  }
+
+  /* Top win-back targets: expected value = win score × lifetime spend. */
+  function renderTargets() {
+    var box = $('topTargets');
+    if (!box) return;
+    var tops = W.rankTargets(state.customers, state.suppressions, 10);
+    if (!tops.length) { box.innerHTML = ''; return; }
+    var html = '<div class="note"><b>Top win-back targets</b> <span class="hint">— ranked by expected value (win score × lifetime spend). Contact these first.</span>' +
+      '<table><tr><th></th><th>Name</th><th>Segment</th><th>Win score</th><th>Lifetime spend</th><th>Expected value</th></tr>';
+    tops.forEach(function (t, i) {
+      html += '<tr><td>' + (i + 1) + '</td><td>' + escapeHtml(t.name || '—') + '<br><span class="hint">' + escapeHtml(t.email) + '</span></td>' +
+        '<td><span class="pill ' + t.segment + '">' + escapeHtml(t.segmentLabel) + '</span></td>' +
+        '<td>' + t.score + '</td><td>$' + t.totalSpent.toFixed(0) + '</td><td><b>$' + t.expectedValue.toFixed(0) + '</b></td></tr>';
+    });
+    box.innerHTML = html + '</table></div>';
+  }
+
+  /* Duplicate customers: same name, different emails — merge them. */
+  function renderDuplicates() {
+    var box = $('dupBox');
+    if (!box) return;
+    var pairs = W.findDuplicatePairs(state.customers);
+    if (!pairs.length) { box.innerHTML = ''; return; }
+    var html = '<div class="note"><b>' + pairs.length + ' possible duplicate' + (pairs.length === 1 ? '' : 's') + '</b> ' +
+      '<span class="hint">— same name, different emails. Merging adds spend/orders together and re-segments.</span>' +
+      '<table><tr><th>Keep</th><th>Merge in</th><th></th></tr>';
+    pairs.forEach(function (p) {
+      html += '<tr><td>' + escapeHtml(p[0].name) + '<br><span class="hint">' + escapeHtml(p[0].email) + '</span></td>' +
+        '<td>' + escapeHtml(p[1].name) + '<br><span class="hint">' + escapeHtml(p[1].email) + '</span></td>' +
+        '<td><button class="btn small" data-merge="' + escapeHtml(p[1].email) + '" data-keep="' + escapeHtml(p[0].email) + '">Merge</button></td></tr>';
+    });
+    box.innerHTML = html + '</table></div>';
+    box.querySelectorAll('[data-merge]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var drop = btn.getAttribute('data-merge'), keep = btn.getAttribute('data-keep');
+        if (!confirm('Merge ' + drop + ' into ' + keep + '? Spend and orders add up; the duplicate row is removed.')) return;
+        state.customers = W.mergeCustomers(state.customers, keep, drop);
+        save(); renderSegments(); renderHeadStats(); renderCampaign();
       });
     });
   }
@@ -234,6 +276,11 @@
       (sendable.length !== inSeg.length ? ' · <b>' + sendable.length + '</b> sendable (' + (inSeg.length - sendable.length) + ' suppressed)' : '') +
       '.</div>' +
       '<div class="btnrow"><button class="btn small" id="segCsvBtn">Export segment CSV</button></div>' +
+      '<details class="offeredit"><summary>A/B test this segment</summary>' +
+      '<p class="hint">Split the sendable customers into two deterministic groups — send variant A to one, variant B to the other. ' +
+      'Tag each contact with its group in the Tracking tab; the comparison appears in campaign performance.</p>' +
+      '<div class="btnrow"><button class="btn small" id="abSplitBtn">Split into A / B</button></div>' +
+      '<div id="abOut"></div></details>' +
       '<details class="offeredit"><summary>Customize this segment\'s offer</summary>' +
       '<div class="row"><div><label>Offer text</label><input type="text" id="offerVal" value="' +
       escapeHtml(custom.value || '') + '" placeholder="e.g. 20% off, this week only"></div></div>' +
@@ -271,6 +318,23 @@
       delete state.offers[seg];
       save(); renderCampaign();
     });
+    $('abSplitBtn').addEventListener('click', function () {
+      var split = W.splitAB(sendable);
+      function groupCard(label, list) {
+        var emails = list.map(function (c) { return c.email; }).join(', ');
+        return '<div class="draft"><h4>Group ' + label + ' — ' + list.length + ' customers ' +
+          '<button class="btn small ghost" data-abcopy="' + label + '">Copy emails</button></h4>' +
+          '<p class="hint">' + escapeHtml(emails.slice(0, 160)) + (emails.length > 160 ? '…' : '') + '</p></div>';
+      }
+      $('abOut').innerHTML = groupCard('A', split.a) + groupCard('B', split.b) +
+        '<p class="hint">The split is deterministic — the same list always produces the same groups, so you can rebuild them any time.</p>';
+      $('abOut').querySelectorAll('[data-abcopy]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var list = btn.getAttribute('data-abcopy') === 'A' ? split.a : split.b;
+          copyText(btn, list.map(function (c) { return c.email; }).join(', '));
+        });
+      });
+    });
 
     out.querySelectorAll('[data-copy]').forEach(function (btn) {
       btn.addEventListener('click', function () {
@@ -300,6 +364,7 @@
       date: $('trkDate').value || new Date().toISOString().slice(0, 10),
       channel: $('trkChannel').value,
       result: result,
+      group: $('trkGroup').value || '',
       followUp: $('trkFollow').value || ''
     });
     if (result === 'unsub') {
@@ -346,13 +411,14 @@
     }
     var won = state.tracking.filter(function (t) { return t.result === 'won'; }).length;
     html += '<p class="ok"><b>' + state.tracking.length + '</b> contacts logged · <b>' + won + '</b> won back 🎉</p>';
-    html += '<table><tr><th>Email</th><th>Segment</th><th>Date</th><th>Channel</th><th>Result</th><th>Follow-up</th></tr>';
+    html += '<table><tr><th>Email</th><th>Segment</th><th>Date</th><th>Channel</th><th>Group</th><th>Result</th><th>Follow-up</th></tr>';
     var today = W.todayISO();
     state.tracking.forEach(function (t) {
       var dueMark = (t.followUp && t.followUp <= today && t.result !== 'won' && t.result !== 'unsub')
         ? ' <span class="pill lost">due</span>' : '';
       html += '<tr><td>' + escapeHtml(t.email) + '</td><td>' + escapeHtml(t.segment) +
         '</td><td>' + escapeHtml(t.date) + '</td><td>' + escapeHtml(t.channel) +
+        '</td><td>' + escapeHtml(t.group || '—') +
         '</td><td>' + escapeHtml(t.result) + '</td><td>' + escapeHtml(t.followUp || '—') + dueMark + '</td></tr>';
     });
     el.innerHTML = html + '</table>' + renderSuppressionList();
@@ -375,7 +441,19 @@
         '</b></td><td>' + r.winRate + '%</td></tr>';
     });
     box.innerHTML = html + '</table>' +
-      '<p class="hint">Win rate = won ÷ contacts logged. Log contacts in the form above with matching customer emails to attribute results.</p>';
+      '<p class="hint">Win rate = won ÷ contacts logged. Log contacts in the form above with matching customer emails to attribute results.</p>' +
+      renderAB();
+  }
+
+  /* A/B comparison from group-tagged tracking entries. */
+  function renderAB() {
+    var a = state.tracking.filter(function (t) { return t.group === 'A'; });
+    var b = state.tracking.filter(function (t) { return t.group === 'B'; });
+    if (!a.length && !b.length) return '';
+    var cmp = W.abCompare(a, b);
+    return '<div class="note"><b>A/B test:</b> group A — ' + cmp.a.won + '/' + cmp.a.total + ' won (' + cmp.a.rate + '%) · ' +
+      'group B — ' + cmp.b.won + '/' + cmp.b.total + ' won (' + cmp.b.rate + '%).<br>' +
+      escapeHtml(cmp.verdict) + '</div>';
   }
 
   function renderSendSeg() {

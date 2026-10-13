@@ -168,6 +168,14 @@ process.exit(fail ? 1 : 0);
 EOF
 [ $? -eq 0 ] && ok "node win-score/sends/merge-tag checks" || bad "node win-score/sends/merge-tag checks"
 
+node -e "const W=require('./js/logic.js');['rankTargets','splitAB','abCompare','findDuplicatePairs','mergeCustomers'].forEach(function(f){if(typeof W[f]!=='function')throw new Error('missing '+f)});" \
+  && ok "new logic API exported (rankTargets/splitAB/abCompare/findDuplicatePairs/mergeCustomers)" || bad "new logic API missing"
+missing=""
+for n in topTargets dupBox renderTargets renderDuplicates rankTargets abSplitBtn abOut splitAB abCompare trkGroup renderAB; do
+  grep -q "$n" index.html js/app.js js/logic.js || missing="$missing $n"
+done
+[ -z "$missing" ] && ok "UI wires targets, A/B, duplicates" || bad "UI wiring missing:$missing"
+
 echo ""
 echo "smoke: $PASS passed, $FAIL failed"
 exit $FAIL

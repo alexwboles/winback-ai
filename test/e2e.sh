@@ -139,6 +139,56 @@ const lap = stats.find(r => r.segment === 'lapsed');
   ? ok('flow16: lapsed stats correct') : bad('flow16 lap=' + JSON.stringify(lap));
 (vip && vip.winRate === 50) ? ok('flow16: win rate 50% (1 won / 2 contacted)') : bad('flow16 winRate=' + (vip && vip.winRate));
 
+// Flow 26: rankTargets — expected value ranking, champions/unknowns excluded
+(function () {
+  const s2 = W.segmentCustomers([
+    { name: 'VIP Q', email: 'q@x.com', lastPurchase: '2026-03-01', totalSpent: 2000, orders: 8 },
+    { name: 'Small L', email: 'l@x.com', lastPurchase: '2026-03-01', totalSpent: 120, orders: 1 },
+    { name: 'Champ', email: 'c@x.com', lastPurchase: '2026-09-20', totalSpent: 900, orders: 6 },
+    { name: 'Ghost', email: 'g@x.com', lastPurchase: '', totalSpent: 0, orders: 1 }
+  ], NOW);
+  const t = W.rankTargets(s2, [], 10);
+  (t.length === 2) ? ok('flow26: champions + unknowns excluded (' + t.length + ')') : bad('flow26 len=' + t.length);
+  (t[0].email === 'q@x.com' && t[0].expectedValue > t[1].expectedValue) ? ok('flow26: highest expected value first') : bad('flow26 order=' + t.map(x => x.email));
+  const supp = W.rankTargets(s2, ['q@x.com'], 10);
+  (supp.length === 1 && supp[0].email === 'l@x.com') ? ok('flow26: suppressed customers excluded') : bad('flow26 supp');
+})();
+
+// Flow 27: splitAB — deterministic, disjoint, covers everyone
+(function () {
+  const list = [{ email: 'b@x.com' }, { email: 'a@x.com' }, { email: 'c@x.com' }, { email: 'd@x.com' }];
+  const s1 = W.splitAB(list), s2 = W.splitAB(list);
+  (JSON.stringify(s1) === JSON.stringify(s2)) ? ok('flow27: deterministic split') : bad('flow27 not deterministic');
+  const all = s1.a.concat(s1.b).map(c => c.email).sort();
+  (JSON.stringify(all) === JSON.stringify(['a@x.com', 'b@x.com', 'c@x.com', 'd@x.com'])) ? ok('flow27: disjoint + complete') : bad('flow27 coverage');
+})();
+
+// Flow 28: abCompare — rates, verdicts, small-sample caveat
+(function () {
+  const mk = (w, t) => Array.from({ length: t }, (_, i) => ({ result: i < w ? 'won' : 'sent' }));
+  const c = W.abCompare(mk(3, 20), mk(7, 20));
+  (c.a.rate === 15 && c.b.rate === 35) ? ok('flow28: rates 15% vs 35%') : bad('flow28 rates=' + c.a.rate + '/' + c.b.rate);
+  (/Group B is winning/.test(c.verdict)) ? ok('flow28: verdict names the winner') : bad('flow28 verdict=' + c.verdict);
+  const early = W.abCompare(mk(1, 3), mk(0, 2));
+  (/Too early/.test(early.verdict)) ? ok('flow28: small-sample caveat') : bad('flow28 early=' + early.verdict);
+})();
+
+// Flow 29: duplicates — find pairs, merge combines, re-segments
+(function () {
+  const s2 = W.segmentCustomers([
+    { name: 'Jane Doe', email: 'jane@x.com', lastPurchase: '2026-09-01', totalSpent: 900, orders: 5 },
+    { name: 'jane  doe', email: 'jane.doe@x.com', lastPurchase: '2026-05-01', totalSpent: 200, orders: 2 },
+    { name: 'Bob', email: 'bob@x.com', lastPurchase: '2026-09-01', totalSpent: 100, orders: 1 }
+  ], NOW);
+  const pairs = W.findDuplicatePairs(s2);
+  (pairs.length === 1 && pairs[0][0].email === 'jane@x.com') ? ok('flow29: duplicate pair found') : bad('flow29 pairs=' + pairs.length);
+  const merged = W.mergeCustomers(s2, 'jane@x.com', 'jane.doe@x.com', NOW);
+  const j = merged.find(c => c.email === 'jane@x.com');
+  (j && j.totalSpent === 1100 && j.orders === 7 && j.lastPurchase === '2026-09-01') ? ok('flow29: spend/orders summed, latest purchase kept') : bad('flow29 merge=' + JSON.stringify(j));
+  (!merged.some(c => c.email === 'jane.doe@x.com')) ? ok('flow29: dropped row removed') : bad('flow29 drop still present');
+  (W.mergeCustomers(s2, 'jane@x.com', 'nobody@x.com', NOW) === s2) ? ok('flow29: missing email is a no-op') : bad('flow29 no-op');
+})();
+
 console.log('');
 console.log('e2e: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

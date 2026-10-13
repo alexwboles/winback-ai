@@ -134,7 +134,8 @@
         orders: Math.max(1, Math.round(toNumber(iOrders >= 0 ? cols[iOrders] : '', 1)))
       });
     }
-    return { rows: rows, errors: errors };
+
+  return { rows: rows, errors: errors };
   }
 
   function percentile(sortedNums, p) {
@@ -542,8 +543,7 @@
   }
 
   /* ---------- follow-up reminders ---------- */
-  function wbTodayISO() {
-    var d = new Date();
+  function wbTodayISO() {    var d = new Date();
     var p = function (n) { return (n < 10 ? '0' : '') + n; };
     return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
   }
@@ -555,6 +555,113 @@
     });
   }
 
+
+    /* ---------- top win-back targets: expected value ranking ----------
+     Expected value = win score × lifetime spend. Champions (already buying)
+     and unknowns are excluded — this is a win-back list. */
+  function rankTargets(segmented, suppressions, n) {
+    var ranked = activeCustomers(segmented, suppressions)
+      .filter(function (c) { return c.segment !== 'champions' && c.segment !== 'unknown'; })
+      .map(function (c) {
+        return {
+          name: c.name, email: c.email, segment: c.segment,
+          segmentLabel: c.segmentLabel, score: c.score,
+          totalSpent: c.totalSpent, lastPurchase: c.lastPurchase,
+          expectedValue: Math.round((c.score * (c.totalSpent || 0)) / 100 * 100) / 100
+        };
+      })
+      .sort(function (a, b) { return b.expectedValue - a.expectedValue || b.score - a.score; });
+    return ranked.slice(0, Math.max(1, n || 10));
+  }
+
+  /* ---------- A/B testing: deterministic split + result comparison ---------- */
+  function hashEmail(email) {
+    var h = 0;
+    var s = String(email || '');
+    for (var i = 0; i < s.length; i++) { h = (h * 31 + s.charCodeAt(i)) | 0; }
+    return Math.abs(h);
+  }
+
+  /** Deterministic A/B split (sorted by email, then hash-parity). Returns {a, b}. */
+  function splitAB(list) {
+    var sorted = (list || []).slice().sort(function (x, y) {
+      return String(x.email) < String(y.email) ? -1 : 1;
+    });
+    var a = [], b = [];
+    sorted.forEach(function (c) { (hashEmail(c.email) % 2 ? b : a).push(c); });
+    return { a: a, b: b };
+  }
+
+  function abRates(entries) {
+    var total = (entries || []).length;
+    var won = (entries || []).filter(function (t) { return t.result === 'won'; }).length;
+    return { total: total, won: won, rate: total ? Math.round((won / total) * 1000) / 10 : 0 };
+  }
+
+  /** Compare two tracked groups. Returns rates + a plain-language verdict. */
+  function abCompare(groupA, groupB) {
+    var a = abRates(groupA), b = abRates(groupB);
+    var verdict;
+    if (a.total < 10 || b.total < 10) {
+      verdict = 'Too early — fewer than 10 tracked contacts per group. Keep logging.';
+    } else if (a.rate === b.rate) {
+      verdict = 'Dead heat at ' + a.rate + '% — no winner yet.';
+    } else {
+      var winner = a.rate > b.rate ? 'A' : 'B';
+      var w = a.rate > b.rate ? a : b, l = a.rate > b.rate ? b : a;
+      verdict = 'Group ' + winner + ' is winning (' + w.rate + '% vs ' + l.rate + '%) — roll with ' + winner + ' for the rest of the list.';
+    }
+    return { a: a, b: b, verdict: verdict };
+  }
+
+  /* ---------- duplicate customers: find + merge ---------- */
+  function normName(n) {
+    return String(n || '').toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
+  /** Candidate duplicate pairs: same normalized name on different emails. */
+  function findDuplicatePairs(customers) {
+    var byName = {};
+    (customers || []).forEach(function (c) {
+      var k = normName(c.name);
+      if (!k) return;
+      (byName[k] = byName[k] || []).push(c);
+    });
+    var pairs = [];
+    Object.keys(byName).forEach(function (k) {
+      var list = byName[k];
+      for (var i = 0; i < list.length; i++) {
+        for (var j = i + 1; j < list.length; j++) {
+          if (list[i].email !== list[j].email) pairs.push([list[i], list[j]]);
+        }
+      }
+    });
+    return pairs;
+  }
+
+  /**
+   * Merge two customer records (same person, two rows). Spend/orders add up,
+   * the latest last-purchase wins, the longer name wins. The whole list is
+   * re-segmented so percentiles stay honest. Returns a new segmented list.
+   */
+  function mergeCustomers(segmented, keepEmail, dropEmail, now) {
+    var list = (segmented || []).slice();
+    var keep = null, drop = null;
+    list.forEach(function (c) {
+      if (c.email === keepEmail) keep = c;
+      if (c.email === dropEmail) drop = c;
+    });
+    if (!keep || !drop || keepEmail === dropEmail) return segmented;
+    var merged = {
+      name: String(keep.name || '').length >= String(drop.name || '').length ? keep.name : drop.name,
+      email: keep.email,
+      lastPurchase: String(keep.lastPurchase || '') >= String(drop.lastPurchase || '') ? keep.lastPurchase : drop.lastPurchase,
+      totalSpent: (Number(keep.totalSpent) || 0) + (Number(drop.totalSpent) || 0),
+      orders: Math.max(1, (Number(keep.orders) || 1) + (Number(drop.orders) || 1))
+    };
+    var raw = list.filter(function (c) { return c.email !== keepEmail && c.email !== dropEmail; }).concat([merged]);
+    return segmentCustomers(raw, now);
+  }
   return {
     SEGMENTS: SEGMENTS,
     DEFAULT_ASSUMPTIONS: DEFAULT_ASSUMPTIONS,
@@ -581,6 +688,11 @@
     logSend: logSend,
     campaignStats: campaignStats,
     segmentKeyFromLabel: segmentKeyFromLabel,
+    rankTargets: rankTargets,
+    splitAB: splitAB,
+    abCompare: abCompare,
+    findDuplicatePairs: findDuplicatePairs,
+    mergeCustomers: mergeCustomers,
     todayISO: wbTodayISO
   };
 });
