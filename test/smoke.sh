@@ -171,7 +171,7 @@ EOF
 node -e "const W=require('./js/logic.js');['rankTargets','splitAB','abCompare','findDuplicatePairs','mergeCustomers'].forEach(function(f){if(typeof W[f]!=='function')throw new Error('missing '+f)});" \
   && ok "new logic API exported (rankTargets/splitAB/abCompare/findDuplicatePairs/mergeCustomers)" || bad "new logic API missing"
 missing=""
-for n in topTargets dupBox renderTargets renderDuplicates rankTargets abSplitBtn abOut splitAB abCompare trkGroup renderAB leaderboard lb-rank lb-money cmp-grid cmp-left cmp-right seg-money; do
+for n in topTargets dupBox renderTargets renderDuplicates rankTargets abSplitBtn abOut splitAB abCompare trkGroup renderAB leaderboard lb-rank lb-money cmp-grid cmp-left cmp-right seg-money data-pi; do
   grep -q "$n" index.html js/app.js js/logic.js css/style.css || missing="$missing $n"
 done
 [ -z "$missing" ] && ok "UI wires targets, A/B, duplicates, leaderboard, composer" || bad "UI wiring missing:$missing"

@@ -26,8 +26,10 @@
       if (s.offers) state.offers = s.offers;
       if (s.customers && s.customers.length) {
         state.customers = s.customers;
-        renderSegments(); renderSegSelect(); renderCampaign(); renderTracking();
       }
+      // render every tab's (possibly empty) state, even before any import,
+      // so no tab ever shows a blank select or blank panel on first visit
+      renderSegments(); renderSegSelect(); renderCampaign(); renderTracking(); renderPerf();
       renderSendSeg();
       renderHeadStats();
     } catch (e) { /* fresh start */ }
@@ -295,10 +297,10 @@
 
     var inSeg = state.customers.filter(function (c) { return c.segment === seg; });
     var sendable = inSeg.filter(function (c) { return !W.isSuppressed(state.suppressions, c.email); });
-    var preview = sendable.slice(0, 3).map(function (c) {
+    var preview = sendable.slice(0, 3).map(function (c, i) {
       var p = W.personalize(camp, c);
       return '<div class="draft"><h4>Preview — ' + escapeHtml(c.email) +
-        ' <button class="btn small ghost copybtn" data-copy="email">Copy email</button></h4>' +
+        ' <button class="btn small ghost copybtn" data-copy="email" data-pi="' + i + '">Copy email</button></h4>' +
         '<b>Subject:</b> ' + escapeHtml(p.subjects[0]) + '\n\n' + escapeHtml(p.email) + '</div>';
     }).join('');
 
@@ -338,10 +340,12 @@
       var res = W.segmentToCSV(state.customers, seg, state.suppressions);
       if (!res.count) { alert('Nobody sendable in this segment.'); return; }
       var blob = new Blob([res.csv], { type: 'text/csv' });
+      var url = URL.createObjectURL(blob);
       var a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
+      a.href = url;
       a.download = 'winback-' + seg + '.csv';
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
     });
     $('offerSave').addEventListener('click', function () {
       var val = $('offerVal').value.trim();
@@ -375,10 +379,13 @@
       btn.addEventListener('click', function () {
         var kind = btn.getAttribute('data-copy');
         var text = kind === 'subjects' ? camp.subjects.join('\n') : camp[kind];
-        // personalized copy buttons inside previews copy that preview's email
-        if (btn.closest('.draft') && btn.closest('.draft').querySelector('h4').textContent.indexOf('Preview') === 0) {
-          var idx = Array.prototype.indexOf.call(out.querySelectorAll('.draft'), btn.closest('.draft'));
-          var cust = sendable[idx - 3]; // 3 template drafts come first
+        // personalized copy buttons inside previews copy that preview's email.
+        // The preview index is stored on the button itself: the A/B split also
+        // renders .draft cards inside this container, so position-in-DOM is
+        // not a reliable lookup.
+        var pi = btn.getAttribute('data-pi');
+        if (pi !== null && pi !== '') {
+          var cust = sendable[Number(pi)];
           if (cust) text = W.personalize(camp, cust).email;
         }
         copyText(btn, text);
@@ -415,8 +422,11 @@
       return [t.email, '"' + (t.name || '').replace(/"/g, '""') + '"', t.segment, t.date, t.channel, t.result, t.followUp || ''].join(',');
     }).join('\n');
     var blob = new Blob([csv], { type: 'text/csv' });
+    var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
-    a.href = URL.createObjectURL(blob); a.download = 'winback-tracking.csv'; a.click();
+    a.href = url; a.download = 'winback-tracking.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
   });
 
   function renderSuppressionList(box) {
