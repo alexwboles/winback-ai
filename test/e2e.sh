@@ -189,6 +189,72 @@ const lap = stats.find(r => r.segment === 'lapsed');
   (W.mergeCustomers(s2, 'jane@x.com', 'nobody@x.com', NOW) === s2) ? ok('flow29: missing email is a no-op') : bad('flow29 no-op');
 })();
 
+// Flow 30: mailto-batch — personalized compose links for a whole segment
+(function () {
+  const camp = W.generateCampaign('vip-dormant', 'Main Street Co', 'warm', 75);
+  const vipList = seg.filter(c => c.segment === 'vip-dormant');
+  const links = vipList.map(c => W.composeMailto(c, camp));
+  const allValid = links.length > 0 && links.every((l, i) =>
+    l.mailto.indexOf('mailto:' + encodeURIComponent(vipList[i].email)) === 0 &&
+    decodeURIComponent(l.mailto).indexOf(vipList[i].name.split(' ')[0]) !== -1 &&
+    l.body.indexOf('{name}') === -1);
+  allValid ? ok('flow30: ' + links.length + ' personalized mailto links, no raw merge tags') : bad('flow30 mailto');
+})();
+
+// Flow 31: ESP exports agree on the sendable set, suppressed excluded
+(function () {
+  const camp = W.generateCampaign('lapsed', 'Biz', 'warm', 75);
+  const lapsedSeg = seg.find(c => c.email === 'noah@example.com').segment;
+  const supp = W.suppressEmail([], 'lucas@example.com');
+  const counts = ['mailchimp', 'constant-contact', 'brevo'].map(f =>
+    W.espExport(seg, lapsedSeg, camp, { format: f, suppressions: supp }).count);
+  const plain = W.segmentToCSV(seg, lapsedSeg, supp).count;
+  (counts.every(c => c === plain) && counts[0] > 0)
+    ? ok('flow31: all 3 ESP formats export the same ' + counts[0] + ' sendable contacts') : bad('flow31 counts=' + counts + ' vs ' + plain);
+  const mc = W.espExport(seg, lapsedSeg, camp, { format: 'mailchimp', suppressions: supp });
+  (mc.csv.indexOf('lucas@example.com') === -1 && mc.csv.split('\n').length === mc.count + 1)
+    ? ok('flow31: header + exactly one line per contact, suppressed gone') : bad('flow31 csv shape');
+})();
+
+// Flow 32: result import -> actual ROI end-to-end
+(function () {
+  const csv = ['email,opened,purchased,revenue,date',
+    'emma@example.com,,yes,340,2026-10-15',
+    'noah@example.com,yes,,,2026-10-16',
+    'stranger@example.com,,yes,85,2026-10-16'].join('\n');
+  const parsed = W.parseResultImport(csv);
+  const imp = W.importResults([], seg, parsed.rows, '2026-10-16');
+  const act = W.estimateROIActual(seg, imp.tracking, { avgOrderValue: 100, marginPct: 0.5 });
+  const vip = act.perSegment['vip-dormant'];
+  (imp.summary.won === 2 && vip && vip.won === 1 && vip.revenue === 340 &&
+   act.revenue === 425 && /Real results/.test(act.verdict))
+    ? ok('flow32: import -> actual ROI counts real revenue ($425), vip-dormant 1 won') : bad('flow32 act=' + JSON.stringify(act));
+})();
+
+// Flow 33: sequence lifecycle — start, due dates, advance to done
+(function () {
+  const entries = W.startSequenceEntries(seg, 'vip-dormant', [], '2026-10-15');
+  if (!entries.length) { bad('flow33: no entries'); return; }
+  const e0 = entries[0];
+  const step2 = W.seqNextDue(e0, '2026-10-18');
+  const step3 = W.seqNextDue(W.advanceSequenceEntry(e0), '2026-10-22');
+  const done = [0, 1, 2, 3].reduce((e) => W.advanceSequenceEntry(e), e0);
+  (step2 && step2.step.n === 2 && step2.step.channel === 'SMS' &&
+   step3 && step3.step.n === 3 &&
+   W.seqNextDue(done, '2026-11-01') === null &&
+   W.followUpsDue(entries, '2026-10-18').length === entries.length)
+    ? ok('flow33: cadence 0/3/7/14, advances through 4 steps, all due on day 3') : bad('flow33 lifecycle');
+  const won = Object.assign({}, e0, { result: 'won' });
+  (W.followUpsDue([won], '2026-11-01').length === 0) ? ok('flow33: buyers drop out of the sequence') : bad('flow33 dropout');
+})();
+
+// Flow 34: estimateROI regression on the flow-7 fixture (refactor must not move numbers)
+(function () {
+  const roi = W.estimateROI(seg, { avgOrderValue: 100, marginPct: 0.5 });
+  const mathOk = roi.expectedRevenue > 0 && roi.expectedNet === Math.round(roi.expectedRevenue * 0.5 - roi.expectedCost);
+  (mathOk && roi.customers === 7) ? ok('flow34: estimateROI math still consistent on 7-customer fixture, net=$' + roi.expectedNet) : bad('flow34 roi');
+})();
+
 console.log('');
 console.log('e2e: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

@@ -280,3 +280,36 @@ th.sortable:hover { color: var(--coral-deep); }
   .lb-money { grid-column: 2; text-align: left; }
   .lb-money b { display: inline; margin-right: 8px; }
 }
+
+/* ---------- send path: mailto-batch queue ---------- */
+.prog { margin: 18px 0 6px; }
+.prog-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+.prog-bar { height: 8px; background: var(--line-soft); }
+.prog-bar i { display: block; height: 100%; background: var(--coral); transition: width .25s; }
+#sendQueue { display: grid; gap: 8px; margin-top: 16px; }
+.qrow {
+  display: grid; grid-template-columns: 1fr auto auto; gap: 14px; align-items: center;
+  background: #fff; border: 1px solid var(--line); padding: 11px 14px;
+}
+.qrow.done { border-left: 4px solid var(--moss); background: #fbfaf3; }
+.qrow.done .q-main { opacity: .62; }
+.q-main strong { font-size: 14.5px; }
+.qrow .btn { margin: 0; }
+#sendSegSel { max-width: 340px; margin-bottom: 4px; }
+
+/* ---------- send path: ESP docs + sequences ---------- */
+#espInfo { margin-top: 16px; }
+#espInfo code {
+  font-family: var(--mono); font-size: 12.5px; background: #f4ecdc;
+  border: 1px solid var(--line); padding: 2px 7px; white-space: nowrap;
+}
+textarea#resultInput { min-height: 110px; font-family: var(--mono); font-size: 13px; resize: vertical; }
+.seq-meta { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+
+/* ---------- ROI mode toggle ---------- */
+.btn.modebtn { margin: 0 8px 16px 0; }
+.btn.modebtn.active { background: var(--coral); color: #fff; }
+
+@media (max-width: 720px) {
+  .qrow { grid-template-columns: 1fr; }
+}

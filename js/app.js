@@ -7,12 +7,15 @@
   var state = {
     customers: [],      // segmented
     segSel: 'vip-dormant',
+    sendSeg: 'vip-dormant', // send-tab segment
     tracking: [],
     sends: [],          // campaign sends: {segment, channel, count, date}
     suppressions: [],   // do-not-contact emails (lowercased)
     offers: {},         // custom per-segment offers: {seg: {value, rationale}}
     segQuery: '',
-    segSort: { key: 'segment', dir: 'asc' }
+    segSort: { key: 'segment', dir: 'asc' },
+    sendMarks: {},      // send-tab queue: email -> true (compose batch progress)
+    roiMode: 'est'      // 'est' | 'act'
   };
 
   function load() {
@@ -24,13 +27,17 @@
       if (s.sends) state.sends = s.sends;
       if (s.suppressions) state.suppressions = s.suppressions;
       if (s.offers) state.offers = s.offers;
+      if (s.sendMarks) state.sendMarks = s.sendMarks;
+      if (s.roiMode) state.roiMode = s.roiMode;
       if (s.customers && s.customers.length) {
         state.customers = s.customers;
+        state.sendSeg = s.sendSeg || state.segSel;
       }
       // render every tab's (possibly empty) state, even before any import,
       // so no tab ever shows a blank select or blank panel on first visit
       renderSegments(); renderSegSelect(); renderCampaign(); renderTracking(); renderPerf();
       renderSendSeg();
+      renderSendSegSel(); renderSendQueue(); renderEspInfo(); renderSeq(); renderRoiMode();
       renderHeadStats();
     } catch (e) { /* fresh start */ }
   }
@@ -39,7 +46,8 @@
       localStorage.setItem('winback-ai', JSON.stringify({
         bizName: $('bizName').value, tone: $('toneSel').value,
         customers: state.customers, tracking: state.tracking, sends: state.sends,
-        suppressions: state.suppressions, offers: state.offers
+        suppressions: state.suppressions, offers: state.offers,
+        sendMarks: state.sendMarks, sendSeg: state.sendSeg, roiMode: state.roiMode
       }));
     } catch (e) { /* storage full/blocked */ }
   }
@@ -98,8 +106,10 @@
       return;
     }
     state.customers = W.segmentCustomers(parsed.rows);
+    state.sendSeg = state.segSel;
     save(); renderHeadStats();
     renderSegments(); renderSegSelect(); renderCampaign();
+    renderSendSegSel(); renderSendQueue(); renderSeq();
     msg.push('<div class="ok"><b>' + parsed.rows.length + '</b> customers segmented. ' +
       'Head to Segments →</div>');
     $('importMsg').innerHTML = msg.join('');
@@ -254,7 +264,7 @@
         var drop = btn.getAttribute('data-merge'), keep = btn.getAttribute('data-keep');
         if (!confirm('Merge ' + drop + ' into ' + keep + '? Spend and orders add up; the duplicate row is removed.')) return;
         state.customers = W.mergeCustomers(state.customers, keep, drop);
-        save(); renderSegments(); renderHeadStats(); renderCampaign();
+        save(); renderSegments(); renderHeadStats(); renderCampaign(); renderSendQueue(); renderSeq();
       });
     });
   }
@@ -271,7 +281,7 @@
     });
   }
   $('segSel').addEventListener('change', function () { state.segSel = $('segSel').value; renderCampaign(); });
-  $('toneSel').addEventListener('change', function () { renderCampaign(); save(); });
+  $('toneSel').addEventListener('change', function () { renderCampaign(); renderSendQueue(); renderSeq(); save(); });
   $('bizName').addEventListener('input', save);
 
   function copyText(btn, text) {
@@ -323,8 +333,8 @@
       escapeHtml(custom.rationale || '') + '" placeholder="Optional rationale"></div></div>' +
       '<div class="btnrow"><button class="btn small" id="offerSave">Save offer</button>' +
       '<button class="btn small ghost" id="offerClear">Reset to default</button></div></details>' +
-      '<div class="note"><b>Send checklist:</b> 1) Copy the email into your email tool (Mailchimp, Gmail…) and send to this segment. ' +
-      '2) Follow up by SMS 3 days later to non-openers. 3) Log every send in the Tracking tab. 4) Don\'t email the same person twice in 14 days.</div>' +
+      '<div class="note"><b>Send checklist:</b> 1) Send from the <a href="#" id="goSend">Send tab</a> — mailto-batch compose in your own mail client, or an ESP-shaped CSV export. ' +
+      '2) Follow up by SMS 3 days later to non-openers (or start the 4-touch sequence in the Send tab). 3) Log every send in the Tracking tab. 4) Don\'t email the same person twice in 14 days.</div>' +
       '</div><div class="cmp-right"><p class="kicker">Live drafts</p>' +
       '<div class="draft"><h4>Subject lines <button class="btn small ghost copybtn" data-copy="subjects">Copy</button></h4><ul class="subjects">' +
       camp.subjects.map(function (s) { return '<li>' + escapeHtml(s) + '</li>'; }).join('') + '</ul></div>' +
@@ -336,6 +346,8 @@
       (preview ? '<h3 style="margin-top:18px">Personalized previews</h3>' + preview : '<p class="hint">Import customers to see personalized previews.</p>') +
       '</div></div>';
 
+    var goSend = $('goSend');
+    if (goSend) goSend.addEventListener('click', function (e) { e.preventDefault(); goTab('send'); });
     $('segCsvBtn').addEventListener('click', function () {
       var res = W.segmentToCSV(state.customers, seg, state.suppressions);
       if (!res.count) { alert('Nobody sendable in this segment.'); return; }
@@ -444,8 +456,8 @@
     var due = W.followUpsDue(state.tracking);
     var html = '';
     if (due.length) {
-      html += '<div class="note due"><b>⏰ ' + due.length + ' follow-up' + (due.length === 1 ? '' : 's') +
-        ' due:</b> ' + due.slice(0, 5).map(function (t) {
+      html += '<div class="note due"><b>' + due.length + ' follow-up' + (due.length === 1 ? '' : 's') +
+        ' due now:</b> ' + due.slice(0, 5).map(function (t) {
           return escapeHtml(t.email) + ' (' + escapeHtml(t.followUp) + ')';
         }).join(' · ') + (due.length > 5 ? ' · …' : '') + '</div>';
     }
@@ -455,16 +467,32 @@
       return;
     }
     var won = state.tracking.filter(function (t) { return t.result === 'won'; }).length;
-    html += '<p class="ok"><b>' + state.tracking.length + '</b> contacts logged · <b>' + won + '</b> won back 🎉</p>';
-    html += '<table><tr><th>Email</th><th>Segment</th><th>Date</th><th>Channel</th><th>Group</th><th>Result</th><th>Follow-up</th></tr>';
+    html += '<p class="ok"><b>' + state.tracking.length + '</b> contacts logged · <b>' + won + '</b> won back</p>';
+    html += '<table><tr><th>Email</th><th>Segment</th><th>Date</th><th>Channel</th><th>Group</th><th>Result</th><th>Follow-up</th><th>Sequence</th></tr>';
     var today = W.todayISO();
-    state.tracking.forEach(function (t) {
+    state.tracking.forEach(function (t, idx) {
       var dueMark = (t.followUp && t.followUp <= today && t.result !== 'won' && t.result !== 'unsub')
         ? ' <span class="pill lost">due</span>' : '';
+      var seqCell = '—';
+      if (t.seq && t.seq.start) {
+        var done = t.seq.done || 0;
+        var next = W.seqNextDue(t, today);
+        seqCell = 'Step ' + done + '/4' +
+          (next ? ' · next ' + escapeHtml(next.due) : (done >= 4 ? ' · done' : '')) +
+          (next ? ' <button class="btn small ghost seqadv" data-idx="' + idx + '">Step done</button>' : '');
+      }
       html += '<tr><td>' + escapeHtml(t.email) + '</td><td>' + escapeHtml(t.segment) +
         '</td><td>' + escapeHtml(t.date) + '</td><td>' + escapeHtml(t.channel) +
         '</td><td>' + escapeHtml(t.group || '—') +
-        '</td><td>' + escapeHtml(t.result) + '</td><td>' + escapeHtml(t.followUp || '—') + dueMark + '</td></tr>';
+        '</td><td>' + escapeHtml(t.result) + '</td><td>' + escapeHtml(t.followUp || '—') + dueMark +
+        '</td><td>' + seqCell + '</td></tr>';
+    });
+    el.querySelectorAll('.seqadv').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var i = Number(b.getAttribute('data-idx'));
+        state.tracking[i] = W.advanceSequenceEntry(state.tracking[i]);
+        save(); renderTracking(); renderHeadStats();
+      });
     });
     el.innerHTML = html + '</table>' + renderSuppressionList();
     bindUnsupp(el);
@@ -526,15 +554,213 @@
     root.querySelectorAll('.unsupp').forEach(function (b) {
       b.addEventListener('click', function () {
         state.suppressions = W.unsuppressEmail(state.suppressions, b.getAttribute('data-email'));
-        save(); renderTracking(); renderSegments(); renderCampaign(); renderHeadStats();
+        save(); renderTracking(); renderSegments(); renderCampaign(); renderSendQueue(); renderSeq(); renderHeadStats();
       });
     });
   }
 
+  /* ---------- Send tab: mailto-batch composer ---------- */
+  function sendQueueList() {
+    var seg = state.sendSeg || 'vip-dormant';
+    return state.customers.filter(function (c) {
+      return c.segment === seg && !W.isSuppressed(state.suppressions, c.email);
+    });
+  }
+  function sendCampaign() {
+    var seg = state.sendSeg || 'vip-dormant';
+    var biz = $('bizName').value.trim() || 'our store';
+    var aov = parseFloat($('roiAov').value) || 75;
+    return W.generateCampaign(seg, biz, $('toneSel').value, aov, state.offers);
+  }
+
+  function renderSendSegSel() {
+    var sel = $('sendSegSel');
+    if (!sel) return;
+    sel.innerHTML = '';
+    Object.keys(W.SEGMENTS).forEach(function (key) {
+      var o = document.createElement('option');
+      o.value = key; o.textContent = W.SEGMENTS[key].label;
+      if (key === state.sendSeg) o.selected = true;
+      sel.appendChild(o);
+    });
+  }
+  $('sendSegSel').addEventListener('change', function () {
+    state.sendSeg = $('sendSegSel').value;
+    save(); renderSendQueue(); renderSeq();
+  });
+
+  function renderSendQueue() {
+    var box = $('sendQueue'), prog = $('sendProgress');
+    if (!box || !prog) return;
+    var list = sendQueueList();
+    var camp = sendCampaign();
+    var marked = list.filter(function (c) { return state.sendMarks[c.email]; }).length;
+    var pct = list.length ? Math.round(marked / list.length * 100) : 0;
+    prog.innerHTML = '<div class="prog"><div class="prog-row"><span><b>' + marked + '</b> of ' + list.length +
+      ' composed</span><span class="hint">' + pct + '%</span></div>' +
+      '<div class="prog-bar"><i style="width:' + pct + '%"></i></div></div>' +
+      (list.length ? '<p class="hint">Click Compose to open a pre-written, personalized email in your mail client. Mark sent as you go — sends log to the Tracking tab automatically.</p>'
+        : '<p class="hint">Nobody sendable in this segment — import a list or pick another segment.</p>');
+    var shown = list.slice(0, 100);
+    box.innerHTML = shown.map(function (c) {
+      var m = W.composeMailto(c, camp);
+      var done = !!state.sendMarks[c.email];
+      return '<div class="qrow' + (done ? ' done' : '') + '">' +
+        '<div class="q-main"><strong>' + escapeHtml(c.name || '—') + '</strong>' +
+        ' <span class="pill ' + c.segment + '">' + escapeHtml(c.segmentLabel) + '</span>' +
+        '<div class="hint">' + escapeHtml(c.email) + '</div></div>' +
+        '<a class="btn small ghost" href="' + escapeHtml(m.mailto) + '">Compose</a>' +
+        (done ? '<span class="hint">sent</span>'
+          : '<button class="btn small qsent" data-email="' + escapeHtml(c.email) + '">Mark sent</button>') +
+        '</div>';
+    }).join('') + (list.length > shown.length ? '<p class="hint">Showing the first 100 — export the segment CSV for the rest.</p>' : '');
+    box.querySelectorAll('.qsent').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var email = b.getAttribute('data-email');
+        var cust = list.find(function (c) { return c.email === email; });
+        var today = W.todayISO();
+        var already = state.tracking.some(function (t) { return t.email === email && t.date === today && t.channel === 'Email'; });
+        if (!already && cust) {
+          state.tracking.unshift({
+            email: email, name: cust.name || '', segment: cust.segmentLabel,
+            date: today, channel: 'Email', result: 'sent', group: '', followUp: ''
+          });
+        }
+        state.sendMarks[email] = true;
+        save(); renderSendQueue(); renderTracking(); renderHeadStats();
+      });
+    });
+  }
+
+  $('composeNextBtn').addEventListener('click', function () {
+    var list = sendQueueList();
+    var next = list.find(function (c) { return !state.sendMarks[c.email]; });
+    if (!next) { alert(list.length ? 'Everyone in this segment is marked sent.' : 'Nobody sendable in this segment.'); return; }
+    window.location.href = W.composeMailto(next, sendCampaign()).mailto;
+  });
+
+  /* ---------- Send tab: ESP-shaped export ---------- */
+  function renderEspInfo() {
+    var box = $('espInfo');
+    if (!box) return;
+    var fmt = W.ESP_FORMATS[$('espFormat').value] || W.ESP_FORMATS['mailchimp'];
+    box.innerHTML = '<details class="offeredit" open><summary>Column mapping — ' + escapeHtml(fmt.label) + '</summary>' +
+      '<p class="hint">' + escapeHtml(fmt.note) + '</p>' +
+      '<table><tr><th>CSV column</th><th>What it is</th></tr>' +
+      fmt.columns.concat(fmt.extra).map(function (c) {
+        return '<tr><td><code>' + escapeHtml(c) + '</code></td><td>' + escapeHtml(espColDoc(c)) + '</td></tr>';
+      }).join('') + '</table></details>';
+  }
+  function espColDoc(col) {
+    var c = String(col).toLowerCase();
+    if (c.indexOf('segment') !== -1) return 'Win-back segment label (e.g. Dormant VIPs)';
+    if (c.indexOf('offer') !== -1) return 'The offer drafted for this segment';
+    if (c.indexOf('score') !== -1) return 'Win score 0–100 (likelihood to come back)';
+    if (c.indexOf('subject') !== -1) return 'First subject line for reference';
+    if (c.indexOf('last purchase') !== -1) return 'Most recent purchase date (YYYY-MM-DD)';
+    if (c.indexOf('total spent') !== -1) return 'Lifetime spend';
+    if (c.indexOf('orders') !== -1) return 'Order count';
+    if (c.indexOf('tags') !== -1) return 'Tags applied on import (winback,<segment>)';
+    if (c.indexOf('email') !== -1) return 'Customer email';
+    if (c.indexOf('first') !== -1) return 'First name';
+    if (c.indexOf('last') !== -1) return 'Last name';
+    return 'Contact field';
+  }
+  $('espFormat').addEventListener('change', renderEspInfo);
+  $('espExportBtn').addEventListener('click', function () {
+    var res = W.espExport(state.customers, state.sendSeg, sendCampaign(), {
+      format: $('espFormat').value, suppressions: state.suppressions
+    });
+    if (!res.count) { alert('Nobody sendable in this segment.'); return; }
+    downloadCSV(res.csv, 'winback-' + state.sendSeg + '-' + $('espFormat').value + '.csv');
+  });
+
+  function downloadCSV(csv, filename) {
+    var blob = new Blob([csv], { type: 'text/csv' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  /* ---------- Send tab: follow-up sequences ---------- */
+  function renderSeq() {
+    var box = $('seqOut');
+    if (!box) return;
+    var seg = state.sendSeg || 'vip-dormant';
+    var biz = $('bizName').value.trim() || 'our store';
+    var aov = parseFloat($('roiAov').value) || 75;
+    var steps = W.buildSequence(seg, biz, $('toneSel').value, aov, state.offers);
+    var list = sendQueueList();
+    var html = '<div class="note"><b>Cadence:</b> ' + steps.map(function (s) {
+      return 'Day ' + s.day + ' — ' + s.label + ' (' + s.channel + ')';
+    }).join(' &rarr; ') + '.<br><span class="hint">Only non-responders get the next touch. A contact who buys or unsubscribes drops out automatically — the Tracking tab shows each contact\'s step and next due date.</span></div>';
+    html += steps.map(function (s, i) {
+      var body = '<h4>Step ' + s.n + ' — ' + escapeHtml(s.label) +
+        ' <button class="btn small ghost copybtn" data-seqcopy="' + i + '">Copy</button></h4>' +
+        '<div class="seq-meta"><span class="pill">Day ' + s.day + '</span> <span class="hint">' + s.channel + '</span></div>' +
+        (s.subject ? '<b>Subject:</b> ' + escapeHtml(s.subject) + '\n\n' : '') + escapeHtml(s.body);
+      return '<div class="draft">' + body + '</div>';
+    }).join('');
+    html += '<div class="btnrow"><button class="btn" id="seqStartBtn">Start sequence for ' + list.length + ' sendable contacts</button></div>';
+    box.innerHTML = html;
+    box.querySelectorAll('[data-seqcopy]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var s = steps[Number(btn.getAttribute('data-seqcopy'))];
+        copyText(btn, (s.subject ? 'Subject: ' + s.subject + '\n\n' : '') + s.body);
+      });
+    });
+    $('seqStartBtn').addEventListener('click', function () {
+      var tracked = {};
+      state.tracking.forEach(function (t) { tracked[t.email] = true; });
+      var fresh = W.startSequenceEntries(state.customers, seg, state.suppressions)
+        .filter(function (e) { return !tracked[e.email]; });
+      if (!fresh.length) { alert('All sendable contacts already have tracking entries.'); return; }
+      if (!confirm('Start the 4-touch sequence for ' + fresh.length + ' contacts? This logs a day-0 send for each and schedules the day-3 SMS follow-up.')) return;
+      state.tracking = fresh.concat(state.tracking);
+      save(); renderSeq(); renderTracking(); renderHeadStats(); renderSendQueue();
+    });
+  }
+
+  /* ---------- Tracking tab: result import ---------- */
+  $('resultImportBtn').addEventListener('click', function () {
+    var parsed = W.parseResultImport($('resultInput').value);
+    var msg = [];
+    if (parsed.errors.length) {
+      msg.push('<div class="err">' + parsed.errors.length + ' row(s) skipped: ' +
+        parsed.errors.slice(0, 4).map(escapeHtml).join('<br>') +
+        (parsed.errors.length > 4 ? '<br>…and ' + (parsed.errors.length - 4) + ' more.' : '') + '</div>');
+    }
+    if (!parsed.rows.length) {
+      $('resultMsg').innerHTML = msg.join('') + '<div class="err">No valid results to import.</div>';
+      return;
+    }
+    var res = W.importResults(state.tracking, state.customers, parsed.rows);
+    state.tracking = res.tracking;
+    var sm = res.summary;
+    save(); renderTracking(); renderHeadStats();
+    $('resultMsg').innerHTML = msg.join('') + '<div class="ok"><b>' + sm.total + '</b> result rows processed: ' +
+      sm.added + ' new, ' + sm.upgraded + ' upgraded, ' + sm.skipped + ' skipped' +
+      (sm.unmatched ? ', ' + sm.unmatched + ' email(s) not in the customer list' : '') +
+      ' · <b>' + sm.won + '</b> purchases recorded. ROI Actuals now runs on these.</div>';
+  });
+
   /* ROI */
-  $('roiCalc').addEventListener('click', function () {
+  function renderRoiMode() {
+    var est = state.roiMode !== 'act';
+    $('roiModeEst').classList.toggle('active', est);
+    $('roiModeAct').classList.toggle('active', !est);
+    $('roiModeEst').classList.toggle('ghost', !est);
+    $('roiModeAct').classList.toggle('ghost', est);
+  }
+  $('roiModeEst').addEventListener('click', function () { state.roiMode = 'est'; save(); renderRoiMode(); renderRoi(); });
+  $('roiModeAct').addEventListener('click', function () { state.roiMode = 'act'; save(); renderRoiMode(); renderRoi(); });
+
+  function renderRoi() {
     var out = $('roiOut');
     if (!state.customers.length) { out.innerHTML = '<p class="err">Import customers first.</p>'; return; }
+    if (state.roiMode === 'act') return renderRoiActual(out);
     var r = W.estimateROI(state.customers, {
       avgOrderValue: parseFloat($('roiAov').value) || 75,
       marginPct: parseFloat($('roiMargin').value)
@@ -554,7 +780,35 @@
     });
     html += '</table><div class="note">' + escapeHtml(r.verdict) + '</div>';
     out.innerHTML = html;
-  });
+  }
+
+  function renderRoiActual(out) {
+    var r = W.estimateROIActual(state.customers, state.tracking, {
+      avgOrderValue: parseFloat($('roiAov').value) || 75,
+      marginPct: parseFloat($('roiMargin').value)
+    });
+    var html = '<div class="kpis">' +
+      kpi(r.contacted, 'Contacts logged') +
+      kpi(r.wonBack, 'Actually won back') +
+      kpi('$' + r.revenue, 'Revenue (real)') +
+      kpi('$' + r.cost, 'Offer cost') +
+      kpi('$' + r.net, 'Net (real)') + '</div>';
+    var keys = Object.keys(r.perSegment);
+    if (keys.length) {
+      html += '<table><tr><th>Segment</th><th>Logged</th><th>Won back</th><th>Win rate</th><th>Revenue</th><th>Cost</th><th>Net</th></tr>';
+      keys.forEach(function (seg) {
+        var p = r.perSegment[seg];
+        html += '<tr><td>' + escapeHtml(p.label) + '</td><td>' + p.contacted + '</td><td><b>' + p.won +
+          '</b></td><td>' + p.winRate + '%</td><td>$' + p.revenue + '</td><td>$' + p.cost +
+          '</td><td>$' + p.net + '</td></tr>';
+      });
+      html += '</table>';
+    }
+    html += '<div class="note">' + escapeHtml(r.verdict) + '</div>' +
+      '<p class="hint">Revenue uses imported purchase amounts where available, otherwise falls back to the average order value above. Log contacts or import a results CSV in the Tracking tab to feed this.</p>';
+    out.innerHTML = html;
+  }
+  $('roiCalc').addEventListener('click', renderRoi);
   function kpi(v, l) { return '<div class="kpi"><div class="v">' + v + '</div><div class="l">' + l + '</div></div>'; }
 
   load();

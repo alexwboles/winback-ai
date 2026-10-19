@@ -416,14 +416,7 @@
       if (!perSegment[seg]) perSegment[seg] = { count: 0, expectedWon: 0, revenue: 0, cost: 0 };
       var rate = rr[seg] !== undefined ? rr[seg] : 0.05;
       var won = rate; // expected customers won back per 1 customer
-      var offer = offerFor(seg, aov);
-      var discountCost = 0;
-      if (offer.type === 'discount') {
-        var pct = parseFloat(offer.value) / 100 || 0;
-        discountCost = aov * pct; // margin given away per redeemer
-      } else {
-        discountCost = offerCost[offer.type] || 0;
-      }
+      var discountCost = offerCostPerWinner(seg, aov, a);
       perSegment[seg].count++;
       perSegment[seg].expectedWon += won;
       perSegment[seg].revenue += won * aov;
@@ -662,6 +655,387 @@
     var raw = list.filter(function (c) { return c.email !== keepEmail && c.email !== dropEmail; }).concat([merged]);
     return segmentCustomers(raw, now);
   }
+  /* ---------- send path: mailto-batch composition ----------
+     Free send path #1: compose per-recipient emails in the user's own mail
+     client. Browsers can't bulk-send mailto links (popup blockers), so the UI
+     renders one compose button per recipient — one click each. */
+  function composeMailto(customer, campaign) {
+    var p = personalize(campaign, customer);
+    var subject = p.subjects[0] || 'A note from us';
+    var body = p.email;
+    return {
+      mailto: 'mailto:' + encodeURIComponent(customer.email) +
+        '?subject=' + encodeURIComponent(subject) +
+        '&body=' + encodeURIComponent(body),
+      subject: subject,
+      body: body
+    };
+  }
+
+  function splitName(full) {
+    var parts = String(full || '').trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return { first: '', last: '' };
+    return { first: parts[0], last: parts.slice(1).join(' ') };
+  }
+
+  /* ---------- send path: ESP-shaped CSV export ----------
+     Free send path #2: export the segment in the column shape common email
+     tools expect on import, plus documented Winback_* columns the user can
+     map to custom fields. Documented in README + the UI. */
+  var ESP_FORMATS = {
+    'mailchimp': {
+      label: 'Mailchimp',
+      columns: ['Email Address', 'First Name', 'Last Name', 'Tags'],
+      extra: ['Winback Segment', 'Winback Offer', 'Winback Score', 'Winback Subject', 'Last Purchase', 'Total Spent', 'Orders'],
+      note: 'Mailchimp skips columns it does not recognize. Map the Winback columns to audience fields or merge tags during import; Tags arrives as "winback,<segment>".'
+    },
+    'constant-contact': {
+      label: 'Constant Contact',
+      columns: ['Email Address', 'First Name', 'Last Name'],
+      extra: ['Winback Segment', 'Winback Offer', 'Winback Score', 'Winback Subject', 'Last Purchase', 'Total Spent', 'Orders'],
+      note: 'Constant Contact lets you map each column on import — point the Winback columns at custom fields.'
+    },
+    'brevo': {
+      label: 'Brevo (Sendinblue)',
+      columns: ['EMAIL', 'FIRSTNAME', 'LASTNAME', 'SMS'],
+      extra: ['WINBACK_SEGMENT', 'WINBACK_OFFER', 'WINBACK_SCORE', 'WINBACK_SUBJECT', 'LAST_PURCHASE', 'TOTAL_SPENT', 'ORDERS'],
+      note: 'Brevo asks you to map each column to a contact attribute on import — map the WINBACK_* columns to new custom attributes.'
+    }
+  };
+
+  function espExport(segmented, segment, campaign, opts) {
+    opts = opts || {};
+    var fmtKey = ESP_FORMATS[opts.format] ? opts.format : 'mailchimp';
+    var fmt = ESP_FORMATS[fmtKey];
+    var list = activeCustomers(
+      (segmented || []).filter(function (c) { return c.segment === segment; }),
+      opts.suppressions
+    );
+    var esc = function (v) {
+      var s = String(v == null ? '' : v);
+      return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    var offerVal = campaign && campaign.offer ? campaign.offer.value : '';
+    var subject0 = campaign && campaign.subjects ? campaign.subjects[0] : '';
+    var lines = [fmt.columns.concat(fmt.extra).map(esc).join(',')];
+    list.forEach(function (c) {
+      var nm = splitName(c.name);
+      var score = (c.score === null || c.score === undefined) ? '' : c.score;
+      var vals;
+      if (fmtKey === 'brevo') {
+        vals = [c.email, nm.first, nm.last, '',
+          c.segmentLabel, offerVal, score, subject0,
+          c.lastPurchase || '', c.totalSpent || 0, c.orders || 1];
+      } else if (fmtKey === 'constant-contact') {
+        vals = [c.email, nm.first, nm.last,
+          c.segmentLabel, offerVal, score, subject0,
+          c.lastPurchase || '', c.totalSpent || 0, c.orders || 1];
+      } else {
+        vals = [c.email, nm.first, nm.last, 'winback,' + c.segment,
+          c.segmentLabel, offerVal, score, subject0,
+          c.lastPurchase || '', c.totalSpent || 0, c.orders || 1];
+      }
+      lines.push(vals.map(esc).join(','));
+    });
+    return {
+      csv: lines.join('\n'),
+      count: list.length,
+      columns: fmt.columns.concat(fmt.extra),
+      formatLabel: fmt.label,
+      note: fmt.note
+    };
+  }
+
+  /* ---------- result import: real outcomes for the ROI estimator ----------
+     Paste an opens/replies/conversions CSV (exported from your ESP or mail
+     client) and the results merge into the tracking sheet. Flexible headers:
+     email (required); opened/open, replied/reply, purchased/won/converted,
+     revenue/amount, date, channel. Strength order: won > opened > sent. */
+  var RESULT_RANK = { 'unsub': -1, 'ignored': 0, 'sent': 1, 'opened': 2, 'won': 3 };
+
+  function resultTruthy(v) {
+    var s = String(v || '').trim();
+    if (!s) return false;
+    if (/^(y|yes|true|1|opened|replied|won|purchased|converted)$/i.test(s)) return true;
+    return parseDate(s) !== null; // a date in the column counts as "yes"
+  }
+
+  function parseResultImport(text) {
+    var rows = [], errors = [];
+    var lines = String(text || '').split(/\r?\n/).filter(function (l) { return l.trim() !== ''; });
+    if (lines.length < 2) return { rows: rows, errors: ['Result CSV needs a header row plus at least one data row.'] };
+
+    var headers = splitCSVLine(lines[0]);
+    var iEmail = headerIndex(headers, ['email', 'emailaddress']);
+    var iOpened = headerIndex(headers, ['opened', 'open', 'opens', 'openedat', 'openeddate']);
+    var iReplied = headerIndex(headers, ['replied', 'reply', 'replies']);
+    var iWon = headerIndex(headers, ['purchased', 'won', 'converted', 'conversion', 'buyer', 'sale']);
+    var iRevenue = headerIndex(headers, ['revenue', 'amount', 'total', 'ordersum', 'spent']);
+    var iDate = headerIndex(headers, ['date', 'sentdate', 'contactdate', 'datelogged']);
+    var iChannel = headerIndex(headers, ['channel', 'medium']);
+    if (iEmail < 0) return { rows: rows, errors: ['No email column found in result CSV.'] };
+
+    for (var r = 1; r < lines.length; r++) {
+      var cols = splitCSVLine(lines[r]);
+      var email = (cols[iEmail] || '').trim().toLowerCase();
+      if (!email) { errors.push('Row ' + (r + 1) + ': skipped (no email).'); continue; }
+      if (!validateEmail(email)) { errors.push('Row ' + (r + 1) + ': skipped (bad email "' + email + '").'); continue; }
+      var revenue = iRevenue >= 0 ? Math.max(0, toNumber(cols[iRevenue], 0)) : 0;
+      var won = (iWon >= 0 && resultTruthy(cols[iWon])) || revenue > 0; // nonzero revenue implies a purchase
+      var opened = won || (iOpened >= 0 && resultTruthy(cols[iOpened])) ||
+        (iReplied >= 0 && resultTruthy(cols[iReplied]));
+      rows.push({
+        email: email,
+        result: won ? 'won' : opened ? 'opened' : 'sent',
+        date: iDate >= 0 && parseDate(cols[iDate]) ? parseDate(cols[iDate]).toISOString().slice(0, 10) : '',
+        revenue: revenue,
+        channel: iChannel >= 0 ? (cols[iChannel] || '').trim() : ''
+      });
+    }
+    return { rows: rows, errors: errors };
+  }
+
+  /* Merge result rows into the tracking sheet. A stronger result upgrades the
+     latest existing entry in place (so win rates stay meaningful);
+     equal/weaker ones are skipped; unsubs are never overridden. */
+  function importResults(tracking, customers, resultRows, today) {
+    var now = today || wbTodayISO();
+    var out = (tracking || []).map(function (t) { return Object.assign({}, t); });
+    var byEmail = {};
+    (customers || []).forEach(function (c) {
+      byEmail[String(c.email || '').trim().toLowerCase()] = c;
+    });
+    var summary = { total: (resultRows || []).length, added: 0, upgraded: 0, skipped: 0, unmatched: 0, won: 0 };
+
+    function rank(r) { return RESULT_RANK[r] !== undefined ? RESULT_RANK[r] : 0; }
+
+    (resultRows || []).forEach(function (rr) {
+      var e = String(rr.email || '').trim().toLowerCase();
+      var cust = byEmail[e];
+      if (!cust) summary.unmatched++;
+      var newRank = rank(rr.result) || 1;
+      var latestIdx = -1;
+      out.forEach(function (t, i) {
+        if (String(t.email || '').toLowerCase() === e &&
+            (latestIdx < 0 || String(t.date || '') >= String(out[latestIdx].date || ''))) latestIdx = i;
+      });
+      var latest = latestIdx >= 0 ? out[latestIdx] : null;
+      if (latest && latest.result === 'unsub') { summary.skipped++; return; }
+      if (latest && rank(latest.result) >= newRank) { summary.skipped++; return; }
+      if (rr.result === 'won') summary.won++;
+      if (latest) {
+        out[latestIdx] = Object.assign({}, latest, {
+          result: rr.result,
+          revenue: rr.revenue || latest.revenue || 0,
+          date: rr.date || latest.date || now,
+          channel: rr.channel || latest.channel || 'Email',
+          source: 'import'
+        });
+        summary.upgraded++;
+      } else {
+        out.unshift({
+          email: e,
+          name: cust ? (cust.name || '') : '',
+          segment: cust ? cust.segmentLabel : '—',
+          date: rr.date || now,
+          channel: rr.channel || 'Email',
+          result: rr.result,
+          revenue: rr.revenue || 0,
+          group: '',
+          followUp: '',
+          source: 'import'
+        });
+        summary.added++;
+      }
+    });
+    return { tracking: out, summary: summary };
+  }
+
+  /* Offer cost per won-back customer — shared by the estimate and actual ROI. */
+  function offerCostPerWinner(segment, aov, assumptions) {
+    var a = assumptions || {};
+    var offerCost = a.offerCostPerRedeemer || DEFAULT_ASSUMPTIONS.offerCostPerRedeemer;
+    var offer = offerFor(segment, aov);
+    if (offer.type === 'discount') {
+      var pct = parseFloat(offer.value) / 100 || 0;
+      return aov * pct; // margin given away per redeemer
+    }
+    return offerCost[offer.type] || 0;
+  }
+
+  /* ROI on REAL outcomes: won-back counts and imported revenue per segment.
+     Segments with no tracked results show contacted=0 and are excluded from
+     the verdict. Revenue falls back to AOV × won when no revenue was imported. */
+  function estimateROIActual(customers, tracking, assumptions) {
+    var a = assumptions || {};
+    var aov = a.avgOrderValue || DEFAULT_ASSUMPTIONS.avgOrderValue;
+    var margin = (a.marginPct !== undefined) ? a.marginPct : DEFAULT_ASSUMPTIONS.marginPct;
+    var byEmail = {};
+    (customers || []).forEach(function (c) {
+      byEmail[String(c.email || '').trim().toLowerCase()] = c.segment;
+    });
+    var perSegment = {};
+    var tWon = 0, tContacted = 0, tRevenue = 0, tCost = 0;
+
+    (tracking || []).forEach(function (t) {
+      var seg = byEmail[String(t.email || '').trim().toLowerCase()] ||
+        segmentKeyFromLabel(t.segment) || 'unknown';
+      if (!perSegment[seg]) {
+        perSegment[seg] = { contacted: 0, won: 0, revenue: 0 };
+      }
+      var p = perSegment[seg];
+      p.contacted++; tContacted++;
+      if (t.result === 'won') {
+        p.won++; tWon++;
+        var rev = Number(t.revenue) > 0 ? Number(t.revenue) : aov;
+        p.revenue += rev; tRevenue += rev;
+      }
+    });
+
+    Object.keys(perSegment).forEach(function (seg) {
+      var p = perSegment[seg];
+      p.cost = Math.round(p.won * offerCostPerWinner(seg, aov, a));
+      p.revenue = Math.round(p.revenue);
+      p.net = Math.round(p.revenue * margin - p.cost);
+      p.winRate = p.contacted ? Math.round((p.won / p.contacted) * 1000) / 10 : 0;
+      p.aovActual = p.won ? Math.round(p.revenue / p.won) : 0;
+      p.label = (SEGMENTS[seg] || SEGMENTS.unknown).label;
+      tCost += p.cost;
+    });
+
+    var net = Math.round(tRevenue * margin - tCost);
+    var verdict;
+    if (!tContacted) {
+      verdict = 'No tracked results yet — log contacts or import a results CSV in the Tracking tab, then run this again.';
+    } else if (net > 0) {
+      verdict = 'Real results: ' + tWon + ' won back from ' + tContacted + ' logged contacts — about $' +
+        Math.round(tRevenue) + ' revenue, $' + net + ' net after offer cost.';
+    } else {
+      verdict = 'Real results: ' + tWon + ' won back from ' + tContacted + ' logged contacts — currently $' +
+        net + ' net. Try a shallower offer or a cleaner list before scaling.';
+    }
+    return {
+      perSegment: perSegment,
+      contacted: tContacted,
+      wonBack: tWon,
+      revenue: Math.round(tRevenue),
+      cost: tCost,
+      net: net,
+      verdict: verdict
+    };
+  }
+
+  /* ---------- follow-up sequences: multi-touch cadence ----------
+     Day 0 = the segment's main campaign draft (email), then an SMS nudge,
+     a second-chance email, and a final call. Each step is a template with
+     {name}/{offer}/{biz} filled at build time and the remaining merge tags
+     ({last_purchase} etc.) filled per customer with personalizeSeqStep.
+     Stop conditions (won, unsubscribed) are enforced by seqNextDue. */
+  var SEQUENCE_STEPS = [
+    { n: 1, day: 0, channel: 'Email', label: 'Main campaign email' },
+    { n: 2, day: 3, channel: 'SMS', label: 'SMS reminder' },
+    { n: 3, day: 7, channel: 'Email', label: 'Second-chance email' },
+    { n: 4, day: 14, channel: 'Email', label: 'Final call' }
+  ];
+
+  var SEQ_COPY = {
+    warm: {
+      'sms': { subject: '', body: 'Hi {name}, quick nudge from {biz} — your {offer} is still waiting. Claim it this week?' },
+      'nudge': {
+        subject: "Don't miss out, {name}",
+        body: "Hi {name},\n\nJust checking in — the {offer} we set aside for you is still available.\n\nIf something's holding you back, hit reply and tell me. I'd rather fix it than lose you.\n\n— {biz}"
+      },
+      'final': {
+        subject: 'Last call: {offer}',
+        body: "Hi {name},\n\nThis is my last note — after this week I'll stop bothering you.\n\nThe {offer} still stands if you want it. Either way, thanks for being a customer.\n\n— {biz}"
+      }
+    },
+    bold: {
+      'sms': { subject: '', body: '{name}, your {offer} from {biz} is on the clock. Claim it this week.' },
+      'nudge': {
+        subject: 'Still on the table: {offer}',
+        body: "Hey {name},\n\nThe {offer} hasn't gone anywhere — but it won't wait forever.\n\nCome back this week.\n\n— {biz}"
+      },
+      'final': {
+        subject: '{name}, final call',
+        body: "Hey {name},\n\nFinal call on the {offer}. Use it by Sunday or it's gone.\n\nNo hard feelings if you're done with us — just didn't want to wonder.\n\n— {biz}"
+      }
+    }
+  };
+
+  function buildSequence(segment, bizName, tone, aov, customOffers) {
+    tone = (tone === 'bold') ? 'bold' : 'warm';
+    var camp = generateCampaign(segment, bizName, tone, aov, customOffers);
+    var tpl = SEQ_COPY[tone];
+    var vars = { biz: bizName || 'our store', offer: camp.offer.value, name: '{name}' };
+    return [
+      { n: 1, day: 0, channel: 'Email', label: 'Main campaign email', subject: camp.subjects[0], body: camp.email },
+      { n: 2, day: 3, channel: 'SMS', label: 'SMS reminder', subject: '', body: fill(tpl.sms.body, vars) },
+      { n: 3, day: 7, channel: 'Email', label: 'Second-chance email', subject: fill(tpl.nudge.subject, vars), body: fill(tpl.nudge.body, vars) },
+      { n: 4, day: 14, channel: 'Email', label: 'Final call', subject: fill(tpl.final.subject, vars), body: fill(tpl.final.body, vars) }
+    ];
+  }
+
+  /* Fill the remaining per-customer merge tags on a sequence step. */
+  function personalizeSeqStep(step, customer) {
+    var vars = {
+      name: firstName(customer.name),
+      last_purchase: customer.lastPurchase || 'a while ago',
+      total_spent: '$' + Math.round(customer.totalSpent || 0),
+      segment: customer.segmentLabel || ''
+    };
+    return {
+      n: step.n, day: step.day, channel: step.channel, label: step.label,
+      subject: fill(step.subject || '', vars), body: fill(step.body || '', vars)
+    };
+  }
+
+  function seqDateAdd(iso, days) {
+    var d = parseDate(iso) || new Date();
+    return new Date(d.getTime() + days * DAY_MS).toISOString().slice(0, 10);
+  }
+
+  /* Next sequence step due for a tracked entry, or null (done / not yet due /
+     resolved). entry.seq = {start: 'YYYY-MM-DD', done: <completed steps>}. */
+  function seqNextDue(entry, today) {
+    if (!entry || !entry.seq || !entry.seq.start) return null;
+    if (entry.result === 'won' || entry.result === 'unsub') return null;
+    var done = entry.seq.done || 0;
+    if (done >= SEQUENCE_STEPS.length) return null;
+    var step = SEQUENCE_STEPS[done];
+    var due = seqDateAdd(entry.seq.start, step.day);
+    var now = today || wbTodayISO();
+    if (due > now) return null;
+    return { step: step, due: due };
+  }
+
+  /* Mark the next due sequence step done: returns a fresh entry with the
+     follow-up date moved to the step after. */
+  function advanceSequenceEntry(entry, today) {
+    var out = Object.assign({}, entry);
+    var done = ((entry.seq && entry.seq.done) || 0) + 1;
+    out.seq = Object.assign({}, entry.seq, { done: done });
+    var next = SEQUENCE_STEPS[done];
+    out.followUp = next ? seqDateAdd(out.seq.start, next.day) : '';
+    return out;
+  }
+
+  /* Build the day-0 tracking entries for starting a sequence on a segment. */
+  function startSequenceEntries(segmented, segment, suppressions, today) {
+    var now = today || wbTodayISO();
+    return activeCustomers(
+      (segmented || []).filter(function (c) { return c.segment === segment; }),
+      suppressions
+    ).map(function (c) {
+      return {
+        email: c.email, name: c.name || '', segment: c.segmentLabel,
+        date: now, channel: 'Email', result: 'sent', group: '',
+        followUp: seqDateAdd(now, 3), source: 'sequence',
+        seq: { start: now, done: 1 }
+      };
+    });
+  }
+
   return {
     SEGMENTS: SEGMENTS,
     DEFAULT_ASSUMPTIONS: DEFAULT_ASSUMPTIONS,
@@ -693,6 +1067,21 @@
     abCompare: abCompare,
     findDuplicatePairs: findDuplicatePairs,
     mergeCustomers: mergeCustomers,
-    todayISO: wbTodayISO
+    todayISO: wbTodayISO,
+    splitName: splitName,
+    composeMailto: composeMailto,
+    ESP_FORMATS: ESP_FORMATS,
+    espExport: espExport,
+    parseResultImport: parseResultImport,
+    importResults: importResults,
+    offerCostPerWinner: offerCostPerWinner,
+    estimateROIActual: estimateROIActual,
+    SEQUENCE_STEPS: SEQUENCE_STEPS,
+    buildSequence: buildSequence,
+    personalizeSeqStep: personalizeSeqStep,
+    seqDateAdd: seqDateAdd,
+    seqNextDue: seqNextDue,
+    advanceSequenceEntry: advanceSequenceEntry,
+    startSequenceEntries: startSequenceEntries
   };
 });

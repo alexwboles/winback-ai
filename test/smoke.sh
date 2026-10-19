@@ -176,6 +176,111 @@ for n in topTargets dupBox renderTargets renderDuplicates rankTargets abSplitBtn
 done
 [ -z "$missing" ] && ok "UI wires targets, A/B, duplicates, leaderboard, composer" || bad "UI wiring missing:$missing"
 
+# new: send path, result import, actual ROI, sequences
+node << 'EOF'
+const W = require('/home/hatch/workspace/winback-ai/js/logic.js');
+let pass = 0, fail = 0;
+const ok = (m) => { pass++; console.log('  PASS: ' + m); };
+const bad = (m) => { fail++; console.log('  FAIL: ' + m); };
+const NOW = '2026-09-27';
+const seg = W.segmentCustomers([
+  { name: 'Ava Martinez', email: 'ava@example.com', lastPurchase: '2026-09-10', totalSpent: 1240, orders: 9 },
+  { name: 'Emma Patel', email: 'emma@example.com', lastPurchase: '2025-10-30', totalSpent: 1500, orders: 11 },
+], NOW);
+const emma = seg.find(c => c.email === 'emma@example.com');
+const camp = W.generateCampaign('vip-dormant', 'Main Street Co', 'warm', 75);
+
+// 20: mailto composition
+const m = W.composeMailto(emma, camp);
+(/^mailto:emma%40example.com\?subject=/.test(m.mailto) && decodeURIComponent(m.mailto).indexOf('Emma') !== -1 && m.body.indexOf('{name}') === -1)
+  ? ok('composeMailto: encoded mailto with personalized subject + body') : bad('composeMailto=' + m.mailto.slice(0, 80));
+
+// 21: ESP exports — 3 formats, correct headers, suppressed excluded
+const mc = W.espExport(seg, 'vip-dormant', camp, { format: 'mailchimp' });
+const cc = W.espExport(seg, 'vip-dormant', camp, { format: 'constant-contact' });
+const br = W.espExport(seg, 'vip-dormant', camp, { format: 'brevo' });
+(mc.csv.split('\n')[0].indexOf('Email Address,First Name,Last Name,Tags') === 0 && mc.count === 1)
+  ? ok('espExport mailchimp: header + 1 sendable row') : bad('mailchimp export');
+(br.csv.split('\n')[0].indexOf('EMAIL,FIRSTNAME,LASTNAME,SMS') === 0 && /WINBACK_SEGMENT/.test(br.csv))
+  ? ok('espExport brevo: uppercase columns + WINBACK_* fields') : bad('brevo export');
+(cc.csv.split('\n')[0].indexOf('Email Address,First Name,Last Name,Winback Segment') === 0)
+  ? ok('espExport constant-contact: header shape') : bad('cc export');
+const mcS = W.espExport(seg, 'vip-dormant', camp, { format: 'mailchimp', suppressions: ['emma@example.com'] });
+(mcS.count === 0) ? ok('espExport: suppressed excluded') : bad('espExport suppression');
+const fb = W.espExport(seg, 'vip-dormant', camp, { format: 'bogus' });
+(fb.formatLabel === 'Mailchimp') ? ok('espExport: unknown format falls back to mailchimp') : bad('espExport fallback');
+const sn = W.splitName('Ava Martinez');
+(sn.first === 'Ava' && sn.last === 'Martinez') ? ok('splitName: first/last split') : bad('splitName');
+
+// 22: result import parse
+const pr = W.parseResultImport('email,opened,purchased,revenue,date\nava@example.com,yes,,,,\nbob@example.com,,,120,2026-10-16\nbad-email,,,,\n');
+(pr.rows.length === 2 && pr.errors.length === 1 && pr.rows[0].result === 'opened' && pr.rows[1].result === 'won' && pr.rows[1].revenue === 120)
+  ? ok('parseResultImport: opened/won/revenue/date parsed, bad email skipped') : bad('parseResultImport=' + JSON.stringify(pr));
+const prBad = W.parseResultImport('name,phone\nBob,555\n');
+(prBad.rows.length === 0 && prBad.errors.length > 0) ? ok('parseResultImport: no email column -> error') : bad('parseResultImport no-email');
+
+// 23: importResults merge rules (in-place upgrade keeps win rates meaningful)
+let imp = W.importResults([{ email: 'ava@example.com', result: 'sent', date: '2026-10-10' }], seg,
+  [{ email: 'ava@example.com', result: 'won', date: '2026-10-16', revenue: 120, channel: 'Email' },
+   { email: 'ava@example.com', result: 'opened', date: '2026-10-17', revenue: 0, channel: '' },
+   { email: 'zzz@example.com', result: 'opened', date: '2026-10-16', revenue: 0, channel: '' }], '2026-10-16');
+const s = imp.summary;
+(s.total === 3 && s.added === 1 && s.upgraded === 1 && s.skipped === 1 && s.unmatched === 1 && s.won === 1)
+  ? ok('importResults: upgrade sent->won, skip weaker opened, add unmatched') : bad('importResults=' + JSON.stringify(s));
+const avaT = imp.tracking.find(t => t.email === 'ava@example.com');
+(imp.tracking.filter(t => t.email === 'ava@example.com').length === 1 && avaT.result === 'won' && avaT.revenue === 120)
+  ? ok('importResults: upgrade happens in place (one row per contact)') : bad('importResults in-place');
+let imp2 = W.importResults([{ email: 'a@x.com', result: 'unsub', date: '2026-10-10' }], seg,
+  [{ email: 'a@x.com', result: 'won', date: '2026-10-16', revenue: 0, channel: '' }], '2026-10-16');
+(imp2.summary.skipped === 1 && imp2.tracking.length === 1) ? ok('importResults: never overrides unsub') : bad('unsub override');
+
+// 24: actual ROI on imported results
+const act = W.estimateROIActual(seg, imp.tracking, { avgOrderValue: 100, marginPct: 0.5 });
+(act.wonBack === 1 && act.revenue === 120 && act.cost === 5 && act.net === 55 && act.perSegment['recent'].winRate === 100)
+  ? ok('estimateROIActual: 1 won @ $120 rev, $5 offer cost (perk), $55 net') : bad('actual ROI=' + JSON.stringify(act));
+const actEmpty = W.estimateROIActual(seg, [], {});
+(/No tracked results/.test(actEmpty.verdict) && actEmpty.net === 0) ? ok('estimateROIActual: empty tracking -> clean verdict') : bad('actual ROI empty');
+
+// 25: sequences
+const steps = W.buildSequence('lapsed', 'Main Street Co', 'warm', 75);
+(steps.length === 4 && steps[0].day === 0 && steps[1].day === 3 && steps[1].channel === 'SMS' && steps[3].day === 14 &&
+ steps[0].subject.indexOf('{name}') !== -1 && /15%/.test(steps[1].body))
+  ? ok('buildSequence: 4 touches, days 0/3/7/14, offer + template tags filled') : bad('buildSequence');
+const ps = W.personalizeSeqStep(steps[1], seg[0]);
+(ps.body.indexOf('Ava') !== -1 && ps.body.indexOf('{name}') === -1) ? ok('personalizeSeqStep: fills merge tags') : bad('seq personalize=' + ps.body.slice(0,40));
+const entries = W.startSequenceEntries(seg, 'vip-dormant', [], '2026-10-15');
+(entries.length === 1 && entries[0].seq.done === 1 && entries[0].followUp === '2026-10-18')
+  ? ok('startSequenceEntries: day-0 entry, day-3 follow-up scheduled') : bad('startSequence');
+const due = W.seqNextDue(entries[0], '2026-10-18');
+(due && due.step.n === 2) ? ok('seqNextDue: step 2 due on day 3') : bad('seqNextDue');
+(W.seqNextDue(entries[0], '2026-10-16') === null) ? ok('seqNextDue: not due early') : bad('seqNextDue early');
+const adv = W.advanceSequenceEntry(entries[0]);
+(adv.seq.done === 2 && adv.followUp === '2026-10-22') ? ok('advanceSequenceEntry: moves to day-7 follow-up') : bad('advance');
+const won2 = Object.assign({}, entries[0], { result: 'won' });
+(W.seqNextDue(won2, '2026-10-30') === null && W.followUpsDue([entries[0]], '2026-10-18').length === 1 && W.followUpsDue([won2], '2026-10-30').length === 0)
+  ? ok('sequences: due list includes seq-due, excludes won') : bad('seq due filtering');
+
+// 26: offerCostPerWinner matches the old estimateROI math
+(W.offerCostPerWinner('lapsed', 75, {}) === 75 * 0.15 && W.offerCostPerWinner('champions', 75, {}) === 8 && W.offerCostPerWinner('recent', 75, {}) === 5)
+  ? ok('offerCostPerWinner: discount 15%, freebie $8, perk $5') : bad('offerCostPerWinner');
+
+// 27: estimateROI regression — refactor must not change the numbers
+const roi = W.estimateROI(seg, { avgOrderValue: 75, marginPct: 0.5 });
+(roi.expectedNet === 8 && roi.expectedWonBack === 0.4 && roi.expectedRevenue === 22 && roi.expectedCost === 3)
+  ? ok('estimateROI unchanged after refactor (net $8)') : bad('estimateROI regression=' + JSON.stringify({net: roi.expectedNet, won: roi.expectedWonBack}));
+
+console.log('node checks: ' + pass + ' passed, ' + fail + ' failed');
+process.exit(fail ? 1 : 0);
+EOF
+[ $? -eq 0 ] && ok "node send-path/result-import/sequence checks" || bad "node send-path/result-import/sequence checks"
+
+# 28: UI wiring — send tab, ESP, results, sequences, ROI mode
+missing=""
+for n in tab-send sendSegSel sendQueue sendProgress composeNextBtn espFormat espExportBtn espInfo seqOut seqStartBtn resultInput resultImportBtn resultMsg roiModeEst roiModeAct renderRoiActual estimateROIActual buildSequence personalizeSeqStep seqNextDue advanceSequenceEntry startSequenceEntries composeMailto espExport parseResultImport importResults offerCostPerWinner downloadCSV seqadv qsent qrow prog-bar ESP_FORMATS SEQUENCE_STEPS; do
+  grep -q "$n" index.html js/app.js js/logic.js css/style.css || missing="$missing $n"
+done
+[ -z "$missing" ] && ok "UI wires send tab, ESP export, result import, sequences, ROI actuals" || bad "missing wiring:$missing"
+
 echo ""
 echo "smoke: $PASS passed, $FAIL failed"
 exit $FAIL

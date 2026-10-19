@@ -36,8 +36,9 @@
     <button data-tab="import" class="active"><span class="n">1</span> Import</button>
     <button data-tab="segments"><span class="n">2</span> Segments</button>
     <button data-tab="campaign"><span class="n">3</span> Campaign</button>
-    <button data-tab="tracking"><span class="n">4</span> Tracking</button>
-    <button data-tab="roi"><span class="n">5</span> ROI</button>
+    <button data-tab="send"><span class="n">4</span> Send</button>
+    <button data-tab="tracking"><span class="n">5</span> Tracking</button>
+    <button data-tab="roi"><span class="n">6</span> ROI</button>
   </nav>
 
   <!-- IMPORT -->
@@ -80,10 +81,50 @@
     </div>
   </div>
 
+  <!-- SEND -->
+  <div class="tab" id="tab-send">
+    <div class="card">
+      <p class="kicker">Step 4 — send path</p>
+      <h2>Send from your own inbox</h2>
+      <p class="sub">No email provider needed. Compose per-recipient emails in your own mail client, export the segment for your email tool, or set up a follow-up cadence.</p>
+      <label for="sendSegSel">Segment</label>
+      <select id="sendSegSel"></select>
+      <div id="sendProgress"></div>
+      <div class="btnrow">
+        <button class="btn" id="composeNextBtn">Compose next unsent email →</button>
+      </div>
+      <div id="sendQueue"></div>
+    </div>
+    <div class="card">
+      <p class="kicker">Step 4b — email-tool export</p>
+      <h2>Export for your email tool</h2>
+      <p class="sub">Download the segment with column headers shaped for common email tools, plus documented Winback columns you can map to custom fields.</p>
+      <div class="row">
+        <div><label>Email tool</label>
+          <select id="espFormat">
+            <option value="mailchimp">Mailchimp</option>
+            <option value="constant-contact">Constant Contact</option>
+            <option value="brevo">Brevo (Sendinblue)</option>
+          </select>
+        </div>
+      </div>
+      <div class="btnrow">
+        <button class="btn" id="espExportBtn">Download ESP-shaped CSV</button>
+      </div>
+      <div id="espInfo"></div>
+    </div>
+    <div class="card">
+      <p class="kicker">Step 4c — multi-touch</p>
+      <h2>Follow-up sequence</h2>
+      <p class="sub">A 4-touch cadence for this segment: day 0 email, day 3 SMS, day 7 email, day 14 final call. Starts and stops per contact — won or unsubscribed contacts drop out automatically.</p>
+      <div id="seqOut"></div>
+    </div>
+  </div>
+
   <!-- TRACKING -->
   <div class="tab" id="tab-tracking">
     <div class="card">
-      <p class="kicker">Step 4 — field results</p>
+      <p class="kicker">Step 5 — field results</p>
       <h2>Send checklist &amp; results</h2>
       <p class="sub">Log who you contacted, when, and what happened. Saved locally.</p>
       <div class="row">
@@ -103,7 +144,17 @@
       <div id="trkTable"></div>
     </div>
     <div class="card">
-      <p class="kicker">Step 4b — campaign performance</p>
+      <p class="kicker">Step 5b — real outcomes</p>
+      <h2>Import results</h2>
+      <p class="sub">Paste an opens / replies / purchases CSV exported from your email tool. Expected columns: <b>email</b> plus <b>opened</b>, <b>replied</b>, <b>purchased</b>, <b>revenue</b>, <b>date</b> (headers are flexible — "won", "converted", "amount" all work). Stronger results upgrade existing entries; unsubscribes are never overridden.</p>
+      <textarea id="resultInput" placeholder="email,opened,replied,purchased,revenue,date&#10;jane@example.com,yes,,2026-10-15,,2026-10-15&#10;bob@example.com,,,yes,120,2026-10-16"></textarea>
+      <div class="btnrow">
+        <button class="btn" id="resultImportBtn">Import results</button>
+      </div>
+      <div id="resultMsg" style="margin-top:10px"></div>
+    </div>
+    <div class="card">
+      <p class="kicker">Step 5c — campaign performance</p>
       <h2>Log a send &amp; see what worked</h2>
       <p class="sub">Record each campaign blast, then compare win-back rates by segment.</p>
       <div class="row">
@@ -122,9 +173,13 @@
   <!-- ROI -->
   <div class="tab" id="tab-roi">
     <div class="card">
-      <p class="kicker">Step 5 — the math</p>
+      <p class="kicker">Step 6 — the math</p>
       <h2>ROI estimator</h2>
-      <p class="sub">Honest math: expected win-backs × average order × margin, minus offer cost. Adjust the assumptions — defaults are conservative.</p>
+      <p class="sub">Honest math: expected win-backs × average order × margin, minus offer cost. Adjust the assumptions — defaults are conservative. Flip to <b>Actuals</b> once results are logged or imported, and the math runs on real outcomes instead of estimates.</p>
+      <div class="btnrow" role="group" aria-label="ROI mode">
+        <button class="btn small modebtn active" id="roiModeEst">Estimates</button>
+        <button class="btn small modebtn ghost" id="roiModeAct">Actuals (tracked results)</button>
+      </div>
       <div class="row">
         <div><label>Average order value ($)</label><input type="number" id="roiAov" value="75" min="1"></div>
         <div><label>Gross margin (0–1)</label><input type="number" id="roiMargin" value="0.5" min="0" max="1" step="0.05"></div>
