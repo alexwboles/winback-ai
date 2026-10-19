@@ -46,7 +46,7 @@
     <div class="card">
       <p class="kicker">Step 1 — audience</p>
       <h2>Import your past customers</h2>
-      <p class="sub">Paste CSV with columns: <b>name, email, last_purchase, total_spent</b> (orders optional). Everything stays in your browser — nothing is uploaded.</p>
+      <p class="sub">Paste CSV with columns: <b>name, email, last_purchase, total_spent</b> (orders optional). A <b>status</b> column is honored too — bounced/unsubscribed rows are auto-suppressed. Everything stays in your browser — nothing is uploaded.</p>
       <textarea id="csvInput" placeholder="name,email,last_purchase,total_spent,orders&#10;Jane Doe,jane@example.com,2025-11-02,840,6&#10;Bob Smith,bob@example.com,2026-06-15,120,1"></textarea>
       <div class="btnrow">
         <button class="btn" id="loadSample">Load sample data</button>
@@ -83,12 +83,25 @@
 
   <!-- SEND -->
   <div class="tab" id="tab-send">
+    <div class="sendnav">
+      <a href="#launchCheck">Checklist</a><span>·</span>
+      <a href="#sendProgress">Compose</a><span>·</span>
+      <a href="#espInfo">Export</a><span>·</span>
+      <a href="#seqOut">Sequence</a><span>·</span>
+      <a href="#seqCadence">Cadence</a>
+    </div>
+    <div class="card">
+      <p class="kicker">Pre-flight</p>
+      <h2>Launch checklist</h2>
+      <p class="sub">Mailchimp won't let you send until every row is green. Same idea, smaller — everything below is checked live against the selected segment.</p>
+      <div id="launchCheck"></div>
+      <label for="sendSegSel">Segment</label>
+      <select id="sendSegSel"></select>
+    </div>
     <div class="card">
       <p class="kicker">Step 4 — send path</p>
       <h2>Send from your own inbox</h2>
       <p class="sub">No email provider needed. Compose per-recipient emails in your own mail client, export the segment for your email tool, or set up a follow-up cadence.</p>
-      <label for="sendSegSel">Segment</label>
-      <select id="sendSegSel"></select>
       <div id="sendProgress"></div>
       <div class="btnrow">
         <button class="btn" id="composeNextBtn">Compose next unsent email →</button>
@@ -116,7 +129,7 @@
     <div class="card">
       <p class="kicker">Step 4c — multi-touch</p>
       <h2>Follow-up sequence</h2>
-      <p class="sub">A 4-touch cadence for this segment: day 0 email, day 3 SMS, day 7 email, day 14 final call. Starts and stops per contact — won or unsubscribed contacts drop out automatically.</p>
+      <p class="sub">A multi-touch cadence for this segment: day 0 email, day 3 SMS, day 7 email, day 14 final call — edit the timing below, flow-builder style. Starts and stops per contact — won or unsubscribed contacts drop out automatically.</p>
       <div id="seqOut"></div>
     </div>
   </div>

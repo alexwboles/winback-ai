@@ -15,6 +15,7 @@
     segQuery: '',
     segSort: { key: 'segment', dir: 'asc' },
     sendMarks: {},      // send-tab queue: email -> true (compose batch progress)
+    seqCfg: {},         // send-tab cadence overrides: {seg: {days:[d0..d3], on:[bool x4]}}
     roiMode: 'est'      // 'est' | 'act'
   };
 
@@ -28,6 +29,7 @@
       if (s.suppressions) state.suppressions = s.suppressions;
       if (s.offers) state.offers = s.offers;
       if (s.sendMarks) state.sendMarks = s.sendMarks;
+      if (s.seqCfg) state.seqCfg = s.seqCfg;
       if (s.roiMode) state.roiMode = s.roiMode;
       if (s.customers && s.customers.length) {
         state.customers = s.customers;
@@ -38,7 +40,7 @@
       renderSegments(); renderSegSelect(); renderCampaign(); renderTracking(); renderPerf();
       renderSendSeg();
       renderSendSegSel(); renderSendQueue(); renderEspInfo(); renderSeq(); renderRoiMode();
-      renderHeadStats();
+      renderHeadStats(); renderLaunchCheck();
     } catch (e) { /* fresh start */ }
   }
   function save() {
@@ -47,7 +49,8 @@
         bizName: $('bizName').value, tone: $('toneSel').value,
         customers: state.customers, tracking: state.tracking, sends: state.sends,
         suppressions: state.suppressions, offers: state.offers,
-        sendMarks: state.sendMarks, sendSeg: state.sendSeg, roiMode: state.roiMode
+        sendMarks: state.sendMarks, sendSeg: state.sendSeg, roiMode: state.roiMode,
+        seqCfg: state.seqCfg
       }));
     } catch (e) { /* storage full/blocked */ }
   }
@@ -107,11 +110,23 @@
     }
     state.customers = W.segmentCustomers(parsed.rows);
     state.sendSeg = state.segSel;
+    // import-time hygiene: bounced/unsubscribed rows are auto-suppressed
+    var hygAdded = 0;
+    (parsed.suppressions || []).forEach(function (e) {
+      if (!W.isSuppressed(state.suppressions, e)) {
+        state.suppressions = W.suppressEmail(state.suppressions, e);
+        hygAdded++;
+      }
+    });
     save(); renderHeadStats();
     renderSegments(); renderSegSelect(); renderCampaign();
-    renderSendSegSel(); renderSendQueue(); renderSeq();
+    renderSendSegSel(); renderSendQueue(); renderSeq(); renderLaunchCheck();
     msg.push('<div class="ok"><b>' + parsed.rows.length + '</b> customers segmented. ' +
       'Head to Segments →</div>');
+    if (hygAdded) {
+      msg.push('<div class="ok"><b>' + hygAdded + '</b> address' + (hygAdded === 1 ? '' : 'es') +
+        ' auto-suppressed from a bounce/unsubscribe status column — they stay out of every export and send queue.</div>');
+    }
     $('importMsg').innerHTML = msg.join('');
     goTab('segments');
   });
@@ -307,6 +322,19 @@
 
     var inSeg = state.customers.filter(function (c) { return c.segment === seg; });
     var sendable = inSeg.filter(function (c) { return !W.isSuppressed(state.suppressions, c.email); });
+
+    // Inbox mock: subject + preview text the way they land on a phone.
+    var firstCust = sendable[0];
+    var mockSubj = firstCust ? W.personalize(camp, firstCust).subjects[0] : camp.subjects[0];
+    var mockPrev = firstCust ? W.personalize(camp, firstCust).preview : camp.preview;
+    var inboxMock = '<div class="inboxmock"><div class="im-head"><span class="im-from">' + escapeHtml(biz) +
+      '</span><span class="im-time">now</span></div>' +
+      '<div class="im-subj">' + escapeHtml(mockSubj) + '</div>' +
+      '<div class="im-prev">' + escapeHtml(mockPrev) + '</div></div>' +
+      (firstCust
+        ? '<p class="hint">Inbox preview for ' + escapeHtml(firstCust.email) + ' — subject + preview text, as it lands on a phone.</p>'
+        : '<p class="hint">Inbox preview — subject + preview text, as it lands on a phone.</p>');
+
     var preview = sendable.slice(0, 3).map(function (c, i) {
       var p = W.personalize(camp, c);
       return '<div class="draft"><h4>Preview — ' + escapeHtml(c.email) +
@@ -334,10 +362,12 @@
       '<div class="btnrow"><button class="btn small" id="offerSave">Save offer</button>' +
       '<button class="btn small ghost" id="offerClear">Reset to default</button></div></details>' +
       '<div class="note"><b>Send checklist:</b> 1) Send from the <a href="#" id="goSend">Send tab</a> — mailto-batch compose in your own mail client, or an ESP-shaped CSV export. ' +
-      '2) Follow up by SMS 3 days later to non-openers (or start the 4-touch sequence in the Send tab). 3) Log every send in the Tracking tab. 4) Don\'t email the same person twice in 14 days.</div>' +
+      '2) Follow up by SMS 3 days later to non-openers (or start the multi-touch sequence in the Send tab). 3) Log every send in the Tracking tab. 4) Don\'t email the same person twice in 14 days.</div>' +
       '</div><div class="cmp-right"><p class="kicker">Live drafts</p>' +
-      '<div class="draft"><h4>Subject lines <button class="btn small ghost copybtn" data-copy="subjects">Copy</button></h4><ul class="subjects">' +
-      camp.subjects.map(function (s) { return '<li>' + escapeHtml(s) + '</li>'; }).join('') + '</ul></div>' +
+      '<div class="draft"><h4>Subject lines <button class="btn small ghost copybtn" data-copy="subjects">Copy</button> ' +
+      '<button class="btn small ghost copybtn" data-copy="preview">Copy preview text</button></h4><ul class="subjects">' +
+      camp.subjects.map(function (s) { return '<li>' + escapeHtml(s) + '</li>'; }).join('') + '</ul>' +
+      inboxMock + '</div>' +
       '<div class="draft"><h4>Email template <button class="btn small ghost copybtn" data-copy="email">Copy</button></h4>' +
       '<p class="hint">Merge tags: {name} = first name · {offer} = this segment\'s offer · {last_purchase} · {total_spent} · {segment}</p>' +
       escapeHtml(camp.email) + '</div>' +
@@ -476,9 +506,10 @@
       var seqCell = '—';
       if (t.seq && t.seq.start) {
         var done = t.seq.done || 0;
+        var stepTotal = (t.seq.steps && t.seq.steps.length) ? t.seq.steps.length : 4;
         var next = W.seqNextDue(t, today);
-        seqCell = 'Step ' + done + '/4' +
-          (next ? ' · next ' + escapeHtml(next.due) : (done >= 4 ? ' · done' : '')) +
+        seqCell = 'Step ' + done + '/' + stepTotal +
+          (next ? ' · next ' + escapeHtml(next.due) : (done >= stepTotal ? ' · done' : '')) +
           (next ? ' <button class="btn small ghost seqadv" data-idx="' + idx + '">Step done</button>' : '');
       }
       html += '<tr><td>' + escapeHtml(t.email) + '</td><td>' + escapeHtml(t.segment) +
@@ -554,7 +585,7 @@
     root.querySelectorAll('.unsupp').forEach(function (b) {
       b.addEventListener('click', function () {
         state.suppressions = W.unsuppressEmail(state.suppressions, b.getAttribute('data-email'));
-        save(); renderTracking(); renderSegments(); renderCampaign(); renderSendQueue(); renderSeq(); renderHeadStats();
+        save(); renderTracking(); renderSegments(); renderCampaign(); renderSendQueue(); renderSeq(); renderLaunchCheck(); renderHeadStats();
       });
     });
   }
@@ -586,7 +617,7 @@
   }
   $('sendSegSel').addEventListener('change', function () {
     state.sendSeg = $('sendSegSel').value;
-    save(); renderSendQueue(); renderSeq();
+    save(); renderSendQueue(); renderSeq(); renderLaunchCheck();
   });
 
   function renderSendQueue() {
@@ -627,7 +658,7 @@
           });
         }
         state.sendMarks[email] = true;
-        save(); renderSendQueue(); renderTracking(); renderHeadStats();
+        save(); renderSendQueue(); renderTracking(); renderHeadStats(); renderLaunchCheck();
       });
     });
   }
@@ -684,42 +715,128 @@
     setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
   }
 
-  /* ---------- Send tab: follow-up sequences ---------- */
+  /* ---------- Send tab: follow-up sequences (flow-builder timeline) ---------- */
+  function getSeqCfg(seg) {
+    var cfg = state.seqCfg[seg] || {};
+    var days = (cfg.days || []).slice(0, 4);
+    var on = (cfg.on || []).slice(0, 4);
+    while (days.length < 4) days.push(W.SEQUENCE_STEPS[days.length].day);
+    while (on.length < 4) on.push(true);
+    return { days: days, on: on };
+  }
+
   function renderSeq() {
     var box = $('seqOut');
     if (!box) return;
     var seg = state.sendSeg || 'vip-dormant';
     var biz = $('bizName').value.trim() || 'our store';
     var aov = parseFloat($('roiAov').value) || 75;
-    var steps = W.buildSequence(seg, biz, $('toneSel').value, aov, state.offers);
+    var tone = $('toneSel').value;
+    var cfg = getSeqCfg(seg);
+    var steps = W.buildSequence(seg, biz, tone, aov, state.offers, cfg);
     var list = sendQueueList();
-    var html = '<div class="note"><b>Cadence:</b> ' + steps.map(function (s) {
-      return 'Day ' + s.day + ' — ' + s.label + ' (' + s.channel + ')';
-    }).join(' &rarr; ') + '.<br><span class="hint">Only non-responders get the next touch. A contact who buys or unsubscribes drops out automatically — the Tracking tab shows each contact\'s step and next due date.</span></div>';
-    html += steps.map(function (s, i) {
-      var body = '<h4>Step ' + s.n + ' — ' + escapeHtml(s.label) +
-        ' <button class="btn small ghost copybtn" data-seqcopy="' + i + '">Copy</button></h4>' +
-        '<div class="seq-meta"><span class="pill">Day ' + s.day + '</span> <span class="hint">' + s.channel + '</span></div>' +
-        (s.subject ? '<b>Subject:</b> ' + escapeHtml(s.subject) + '\n\n' : '') + escapeHtml(s.body);
-      return '<div class="draft">' + body + '</div>';
-    }).join('');
+
+    // Timeline rail, Klaviyo-flow-builder style: day badges on a connector rail.
+    var html = '<div class="seqflow"><div class="sf-rail">';
+    steps.forEach(function (s, i) {
+      var gap = i === 0 ? null : s.day - steps[i - 1].day;
+      html += '<div class="sf-node">' +
+        '<div class="sf-badge">' + (gap === null ? 'DAY 0' : '+' + gap + 'D') + '</div>' +
+        '<div class="sf-card">' +
+          '<div class="sf-head"><span class="sf-step">Step ' + s.n + '</span>' +
+          '<span class="pill">' + escapeHtml(s.channel) + '</span>' +
+          '<span class="hint">goes out day ' + s.day + '</span>' +
+          '<button class="btn small ghost copybtn" data-seqcopy="' + i + '">Copy</button></div>' +
+          '<div class="sf-label">' + escapeHtml(s.label) + '</div>' +
+          (s.subject ? '<div class="sf-subj"><b>Subject:</b> ' + escapeHtml(s.subject) + '</div>' : '') +
+          (s.preview && s.channel !== 'SMS' ? '<div class="sf-prev">' + escapeHtml(s.preview) + '</div>' : '') +
+          '<div class="sf-body">' + escapeHtml(s.body) + '</div>' +
+        '</div></div>';
+    });
+    html += '</div></div>';
+
+    // Cadence editor: day offsets + skip toggles, saved per segment.
+    var def = W.SEQUENCE_STEPS;
+    html += '<details class="offeredit" id="seqCadence"><summary>Edit this cadence</summary>' +
+      '<p class="hint">Change the day each touch goes out, or skip a touch entirely — like a flow builder. Saved per segment; contacts already in the sequence keep the cadence they started with.</p>' +
+      def.map(function (d, i) {
+        return '<div class="row"><div style="flex:2"><label>Step ' + d.n + ' — ' + d.label + ' (' + d.channel + ')</label>' +
+          '<input type="number" min="0" max="90" data-cfgday="' + i + '" value="' + cfg.days[i] + '" aria-label="Day for step ' + d.n + '"></div>' +
+          '<div><label>&nbsp;</label><label class="chkline"><input type="checkbox" data-cfgon="' + i + '"' +
+          (cfg.on[i] ? ' checked' : '') + '> Send this step</label></div></div>';
+      }).join('') +
+      '<div class="btnrow"><button class="btn small" id="seqCfgSave">Save cadence</button>' +
+      '<button class="btn small ghost" id="seqCfgReset">Reset to 0/3/7/14</button></div></details>';
+
+    html += '<div class="note"><span class="hint">Only non-responders get the next touch. A contact who buys or unsubscribes drops out automatically — the Tracking tab shows each contact\'s step and next due date.</span></div>';
     html += '<div class="btnrow"><button class="btn" id="seqStartBtn">Start sequence for ' + list.length + ' sendable contacts</button></div>';
     box.innerHTML = html;
+
     box.querySelectorAll('[data-seqcopy]').forEach(function (btn) {
       btn.addEventListener('click', function () {
         var s = steps[Number(btn.getAttribute('data-seqcopy'))];
         copyText(btn, (s.subject ? 'Subject: ' + s.subject + '\n\n' : '') + s.body);
       });
     });
+    $('seqCfgSave').addEventListener('click', function () {
+      var days = [], on = [];
+      box.querySelectorAll('[data-cfgday]').forEach(function (inp) {
+        days.push(inp.value === '' ? W.SEQUENCE_STEPS[days.length].day : Number(inp.value));
+      });
+      box.querySelectorAll('[data-cfgon]').forEach(function (inp) { on.push(inp.checked); });
+      if (!on.some(function (x) { return x; })) { alert('Keep at least one step enabled.'); return; }
+      state.seqCfg[seg] = { days: days, on: on };
+      save(); renderSeq(); renderLaunchCheck();
+    });
+    $('seqCfgReset').addEventListener('click', function () {
+      delete state.seqCfg[seg];
+      save(); renderSeq(); renderLaunchCheck();
+    });
     $('seqStartBtn').addEventListener('click', function () {
       var tracked = {};
       state.tracking.forEach(function (t) { tracked[t.email] = true; });
-      var fresh = W.startSequenceEntries(state.customers, seg, state.suppressions)
+      var fresh = W.startSequenceEntries(state.customers, seg, state.suppressions, undefined, state.seqCfg[seg])
         .filter(function (e) { return !tracked[e.email]; });
       if (!fresh.length) { alert('All sendable contacts already have tracking entries.'); return; }
-      if (!confirm('Start the 4-touch sequence for ' + fresh.length + ' contacts? This logs a day-0 send for each and schedules the day-3 SMS follow-up.')) return;
+      var touchCount = W.resolveSequenceSteps(state.seqCfg[seg]).length;
+      if (!confirm('Start the ' + touchCount + '-touch sequence for ' + fresh.length +
+        ' contacts? This logs the day-0 send for each and schedules the next touch.')) return;
       state.tracking = fresh.concat(state.tracking);
-      save(); renderSeq(); renderTracking(); renderHeadStats(); renderSendQueue();
+      save(); renderSeq(); renderTracking(); renderHeadStats(); renderSendQueue(); renderLaunchCheck();
+    });
+  }
+
+  /* ---------- Send tab: launch checklist (Mailchimp pre-flight pattern) ---------- */
+  function renderLaunchCheck() {
+    var box = $('launchCheck');
+    if (!box) return;
+    var seg = state.sendSeg || 'vip-dormant';
+    var label = W.SEGMENTS[seg] ? W.SEGMENTS[seg].label : seg;
+    var list = sendQueueList();
+    var touches = W.resolveSequenceSteps(state.seqCfg[seg]).length;
+    function row(ok, title, sub, fixTab) {
+      return '<div class="chk' + (ok ? ' ok' : ' no') + '"><span class="chk-mark">' + (ok ? '✓' : '×') + '</span>' +
+        '<div class="chk-main"><strong>' + escapeHtml(title) + '</strong><span class="hint">' + escapeHtml(sub) + '</span></div>' +
+        (ok || !fixTab ? '' : '<button class="btn small ghost" data-fix="' + fixTab + '">Fix</button>') + '</div>';
+    }
+    var rows = [
+      row(list.length > 0, 'Audience ready',
+        list.length > 0
+          ? list.length + ' sendable in ' + label + ' — suppressed addresses excluded'
+          : 'No sendable contacts in ' + label + ' — import a list or pick another segment.', 'import'),
+      row(state.customers.length > 0, 'Drafts ready',
+        state.customers.length > 0
+          ? 'Day-0 email, SMS, 3 subject lines + preview text generated for ' + label
+          : 'Import customers to generate the drafts.', 'campaign'),
+      row(touches > 0, 'Cadence set',
+        touches + '-touch sequence' + (state.seqCfg[seg] ? ' with custom timing' : ' (day 0/3/7/14)') +
+        ' — non-responders only, buyers and unsubs drop out automatically.', null),
+      row(true, 'Tracking sheet',
+        state.tracking.length + ' contacts logged — results feed ROI Actuals automatically.', 'tracking')
+    ];
+    box.innerHTML = rows.join('');
+    box.querySelectorAll('[data-fix]').forEach(function (b) {
+      b.addEventListener('click', function () { goTab(b.getAttribute('data-fix')); });
     });
   }
 

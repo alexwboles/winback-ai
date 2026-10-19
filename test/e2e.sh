@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# WinBack AI end-to-end tests — 16 flows exercised in Node against js/logic.js.
+# WinBack AI end-to-end tests — 37 flows exercised in Node against js/logic.js.
 set -u
 cd "$(dirname "$0")/.."
 
@@ -246,6 +246,48 @@ const lap = stats.find(r => r.segment === 'lapsed');
     ? ok('flow33: cadence 0/3/7/14, advances through 4 steps, all due on day 3') : bad('flow33 lifecycle');
   const won = Object.assign({}, e0, { result: 'won' });
   (W.followUpsDue([won], '2026-11-01').length === 0) ? ok('flow33: buyers drop out of the sequence') : bad('flow33 dropout');
+})();
+
+// Flow 35: preview text end-to-end — campaign carries it, personalize fills it
+(function () {
+  const camp = W.generateCampaign('at-risk', 'Main Street Co', 'warm', 75);
+  const p = W.personalize(camp, { name: 'Noah Kim', email: 'noah@example.com' });
+  const m = W.composeMailto({ name: 'Noah Kim', email: 'noah@example.com' }, camp);
+  (camp.preview && camp.preview.length > 15 && p.preview && !p.preview.includes('{name}') &&
+   m.subject === p.subjects[0] && m.body.includes('Noah'))
+    ? ok('flow35: preview text generated + personalized; mailto uses subject[0] with named body') : bad('flow35 preview');
+})();
+
+// Flow 36: full custom-cadence journey — build, start, step through, finish
+(function () {
+  const cfg = { days: [0, 2, 9, ''], on: [true, false, true, true] };
+  const steps = W.buildSequence('lapsed', 'Biz', 'warm', 75, {}, cfg);
+  if (steps.length !== 3 || steps[1].day !== 9) { bad('flow36: build steps=' + JSON.stringify(steps.map(s => [s.n, s.day]))); return; }
+  const entries = W.startSequenceEntries(seg, 'lapsed', [], '2026-10-15', cfg);
+  if (!entries.length) { bad('flow36: no entries'); return; }
+  const e = entries[0];
+  const due1 = W.seqNextDue(e, '2026-10-24');
+  const after1 = W.advanceSequenceEntry(e);
+  const due2 = W.seqNextDue(after1, '2026-10-29');
+  const doneE = W.advanceSequenceEntry(W.advanceSequenceEntry(after1));
+  (e.followUp === '2026-10-24' && due1 && due1.step.n === 3 && due1.due === '2026-10-24' &&
+   after1.followUp === '2026-10-29' && due2 && due2.step.n === 4 && due2.due === '2026-10-29' &&
+   W.seqNextDue(doneE, '2026-11-30') === null && doneE.followUp === '')
+    ? ok('flow36: custom 3-touch cadence 0/9/14 steps through to done, SMS skipped') : bad('flow36 journey');
+})();
+
+// Flow 37: hygiene end-to-end — bounced rows auto-suppressed out of exports/queues
+(function () {
+  const parsed = W.parseCSV(['name,email,last_purchase,total_spent,status',
+    'A,a@x.com,2026-01-01,50,subscribed',
+    'B,b@x.com,2025-06-01,400,bounced',
+    'C,c@x.com,2025-06-01,400,unsubscribed'].join('\n'));
+  const s2 = W.segmentCustomers(parsed.rows, NOW);
+  const bSeg = s2.find(c => c.email === 'b@x.com').segment;
+  const exp = W.segmentToCSV(s2, bSeg, parsed.suppressions);
+  const q = W.activeCustomers(s2.filter(c => c.segment === bSeg), parsed.suppressions);
+  (parsed.suppressions.length === 2 && exp.count === q.length && exp.csv.indexOf('b@x.com') === -1 && exp.csv.indexOf('a@x.com') === -1)
+    ? ok('flow37: 2 hygiene suppressions excluded from segment export and send queue') : bad('flow37 hygiene');
 })();
 
 // Flow 34: estimateROI regression on the flow-7 fixture (refactor must not move numbers)

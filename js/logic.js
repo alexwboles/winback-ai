@@ -103,9 +103,9 @@
   }
 
   function parseCSV(text) {
-    var rows = [], errors = [], seen = {};
+    var rows = [], errors = [], seen = {}, suppressions = [];
     var lines = String(text || '').split(/\r?\n/).filter(function (l) { return l.trim() !== ''; });
-    if (lines.length < 2) return { rows: rows, errors: ['CSV needs a header row plus at least one data row.'] };
+    if (lines.length < 2) return { rows: rows, errors: ['CSV needs a header row plus at least one data row.'], suppressions: suppressions };
 
     var headers = splitCSVLine(lines[0]);
     var iName = headerIndex(headers, ['name', 'fullname', 'customer', 'customername']);
@@ -113,8 +113,11 @@
     var iLast = headerIndex(headers, ['lastpurchase', 'lastorder', 'lastpurchasedate', 'lastbuy', 'lastvisit']);
     var iSpent = headerIndex(headers, ['totalspent', 'spent', 'lifetimevalue', 'ltv', 'total', 'revenue']);
     var iOrders = headerIndex(headers, ['orders', 'ordercount', 'purchases', 'numorders']);
+    // Mailchimp-style hygiene: recognize bounced/unsubscribed status columns so
+    // those addresses are auto-suppressed at import instead of being mailed.
+    var iStatus = headerIndex(headers, ['status', 'subscriptionstatus', 'subscriberstatus', 'contactstatus', 'emailstatus', 'bounced', 'unsubscribed', 'optout', 'cleaned']);
 
-    if (iEmail < 0) return { rows: rows, errors: ['No email column found. Need at least an "email" column.'] };
+    if (iEmail < 0) return { rows: rows, errors: ['No email column found. Need at least an "email" column.'], suppressions: suppressions };
 
     for (var r = 1; r < lines.length; r++) {
       var cols = splitCSVLine(lines[r]);
@@ -125,17 +128,22 @@
       seen[email] = true;
       var lastRaw = iLast >= 0 ? (cols[iLast] || '') : '';
       var last = parseDate(lastRaw);
+      var statusVal = iStatus >= 0 ? (cols[iStatus] || '') : '';
+      var hygiene = /bounc|cleaned|complaint|spam trap/i.test(statusVal) ? 'bounced'
+        : /unsub|opted.?out|opt.?out|do.?not.?contact|suppress/i.test(statusVal) ? 'unsub' : '';
+      if (hygiene) suppressions.push(email);
       rows.push({
         name: iName >= 0 ? (cols[iName] || '').trim() : '',
         email: email,
         lastPurchase: last ? last.toISOString().slice(0, 10) : '',
         lastPurchaseRaw: lastRaw,
         totalSpent: toNumber(iSpent >= 0 ? cols[iSpent] : '', 0),
-        orders: Math.max(1, Math.round(toNumber(iOrders >= 0 ? cols[iOrders] : '', 1)))
+        orders: Math.max(1, Math.round(toNumber(iOrders >= 0 ? cols[iOrders] : '', 1))),
+        hygiene: hygiene
       });
     }
 
-  return { rows: rows, errors: errors };
+  return { rows: rows, errors: errors, suppressions: suppressions };
   }
 
   function percentile(sortedNums, p) {
@@ -305,6 +313,46 @@
     });
   }
 
+  /* Preview text (preheader): the inbox teaser line under the subject.
+     Klaviyo and Mailchimp both treat subject + preheader as a pair — this is
+     what lifts the open rate. Generated per segment x tone like everything else. */
+  var PREVIEW_COPY = {
+    'champions': {
+      warm: 'A {offer} with our thanks — claim it on your next visit.',
+      bold: 'VIP treatment: {offer}. This week only.'
+    },
+    'recent': {
+      warm: 'Plus {offer} on your next order. New things since your visit.',
+      bold: '{offer} — new arrivals just landed.'
+    },
+    'at-risk': {
+      warm: 'Your {offer} is waiting — come see what\'s new.',
+      bold: 'Where\'d you go? {offer} to come back this week.'
+    },
+    'lapsed': {
+      warm: 'Give us one more shot? {offer} inside.',
+      bold: 'Last call: {offer}. Ends Sunday.'
+    },
+    'vip-dormant': {
+      warm: 'A personal note — and {offer} with my compliments.',
+      bold: 'Exclusive: {offer}. Don\'t let it expire.'
+    },
+    'lost': {
+      warm: 'No pressure — but {offer} if you ever want back.',
+      bold: 'Final: {offer}. After this we stop emailing.'
+    },
+    'unknown': {
+      warm: '{offer} for your next visit. Just saying hello.',
+      bold: '{offer} waiting for you. Quick hello.'
+    }
+  };
+
+  function previewText(segment, tone) {
+    tone = (tone === 'bold') ? 'bold' : 'warm';
+    var seg = PREVIEW_COPY[segment] || PREVIEW_COPY.unknown;
+    return seg[tone];
+  }
+
   function generateCampaign(segment, businessName, tone, avgOrderValue, customOffers) {
     tone = (tone === 'bold') ? 'bold' : 'warm';
     var tpl = (COPY[segment] || COPY.unknown)[tone];
@@ -316,6 +364,7 @@
       tone: tone,
       offer: offer,
       subjects: tpl.subjects.map(function (s) { return fill(s, vars); }),
+      preview: fill(previewText(segment, tone), vars),
       email: fill(tpl.email, vars),
       sms: fill(tpl.sms, vars)
     };
@@ -332,6 +381,7 @@
     };
     return {
       subjects: campaign.subjects.map(function (s) { return fill(s, vars); }),
+      preview: fill(campaign.preview || '', vars),
       email: fill(campaign.email, vars),
       sms: fill(campaign.sms, vars)
     };
@@ -943,10 +993,12 @@
       'sms': { subject: '', body: 'Hi {name}, quick nudge from {biz} — your {offer} is still waiting. Claim it this week?' },
       'nudge': {
         subject: "Don't miss out, {name}",
+        preview: 'Still thinking it over? Your {offer} is inside.',
         body: "Hi {name},\n\nJust checking in — the {offer} we set aside for you is still available.\n\nIf something's holding you back, hit reply and tell me. I'd rather fix it than lose you.\n\n— {biz}"
       },
       'final': {
         subject: 'Last call: {offer}',
+        preview: 'One last note — the {offer} stands through Sunday.',
         body: "Hi {name},\n\nThis is my last note — after this week I'll stop bothering you.\n\nThe {offer} still stands if you want it. Either way, thanks for being a customer.\n\n— {biz}"
       }
     },
@@ -954,26 +1006,57 @@
       'sms': { subject: '', body: '{name}, your {offer} from {biz} is on the clock. Claim it this week.' },
       'nudge': {
         subject: 'Still on the table: {offer}',
+        preview: "The {offer} hasn't gone anywhere. Yet.",
         body: "Hey {name},\n\nThe {offer} hasn't gone anywhere — but it won't wait forever.\n\nCome back this week.\n\n— {biz}"
       },
       'final': {
         subject: '{name}, final call',
+        preview: "Use it by Sunday or it's gone.",
         body: "Hey {name},\n\nFinal call on the {offer}. Use it by Sunday or it's gone.\n\nNo hard feelings if you're done with us — just didn't want to wonder.\n\n— {biz}"
       }
     }
   };
 
-  function buildSequence(segment, bizName, tone, aov, customOffers) {
+  /* Cadence overrides per segment (Klaviyo-flow-builder style):
+     cfg = { days: [d0, d1, d2, d3], on: [true, ...] }. resolveSequenceSteps
+     merges overrides onto SEQUENCE_STEPS and drops disabled steps. Entries
+     store their resolved steps, so seqNextDue / advanceSequenceEntry honor
+     the cadence in effect when the entry started; older entries without
+     stored steps fall back to SEQUENCE_STEPS. */
+  function resolveSequenceSteps(cfg) {
+    var days = (cfg && cfg.days) || [];
+    var on = (cfg && cfg.on) || [];
+    return SEQUENCE_STEPS.map(function (s, i) {
+      var raw = days[i];
+      var d = (raw === undefined || raw === '') ? s.day : Math.max(0, Math.round(Number(raw) || 0));
+      return {
+        n: s.n,
+        day: d,
+        channel: s.channel,
+        label: s.label,
+        enabled: on[i] === undefined ? true : !!on[i]
+      };
+    }).filter(function (s) { return s.enabled; });
+  }
+
+  function buildSequence(segment, bizName, tone, aov, customOffers, seqCfg) {
     tone = (tone === 'bold') ? 'bold' : 'warm';
     var camp = generateCampaign(segment, bizName, tone, aov, customOffers);
     var tpl = SEQ_COPY[tone];
     var vars = { biz: bizName || 'our store', offer: camp.offer.value, name: '{name}' };
-    return [
-      { n: 1, day: 0, channel: 'Email', label: 'Main campaign email', subject: camp.subjects[0], body: camp.email },
-      { n: 2, day: 3, channel: 'SMS', label: 'SMS reminder', subject: '', body: fill(tpl.sms.body, vars) },
-      { n: 3, day: 7, channel: 'Email', label: 'Second-chance email', subject: fill(tpl.nudge.subject, vars), body: fill(tpl.nudge.body, vars) },
-      { n: 4, day: 14, channel: 'Email', label: 'Final call', subject: fill(tpl.final.subject, vars), body: fill(tpl.final.body, vars) }
-    ];
+    var bodies = {
+      1: { subject: camp.subjects[0], body: camp.email, preview: camp.preview },
+      2: { subject: '', body: fill(tpl.sms.body, vars), preview: '' },
+      3: { subject: fill(tpl.nudge.subject, vars), body: fill(tpl.nudge.body, vars), preview: fill(tpl.nudge.preview, vars) },
+      4: { subject: fill(tpl.final.subject, vars), body: fill(tpl.final.body, vars), preview: fill(tpl.final.preview, vars) }
+    };
+    return resolveSequenceSteps(seqCfg).map(function (s) {
+      var b = bodies[s.n];
+      return {
+        n: s.n, day: s.day, channel: s.channel, label: s.label,
+        subject: b.subject, body: b.body, preview: b.preview
+      };
+    });
   }
 
   /* Fill the remaining per-customer merge tags on a sequence step. */
@@ -996,13 +1079,21 @@
   }
 
   /* Next sequence step due for a tracked entry, or null (done / not yet due /
-     resolved). entry.seq = {start: 'YYYY-MM-DD', done: <completed steps>}. */
+     resolved). entry.seq = {start: 'YYYY-MM-DD', done: <completed steps>,
+     steps: <resolved steps at start time>}. */
+  function seqEntrySteps(entry) {
+    return (entry.seq && entry.seq.steps && entry.seq.steps.length)
+      ? entry.seq.steps
+      : SEQUENCE_STEPS;
+  }
+
   function seqNextDue(entry, today) {
     if (!entry || !entry.seq || !entry.seq.start) return null;
     if (entry.result === 'won' || entry.result === 'unsub') return null;
+    var steps = seqEntrySteps(entry);
     var done = entry.seq.done || 0;
-    if (done >= SEQUENCE_STEPS.length) return null;
-    var step = SEQUENCE_STEPS[done];
+    if (done >= steps.length) return null;
+    var step = steps[done];
     var due = seqDateAdd(entry.seq.start, step.day);
     var now = today || wbTodayISO();
     if (due > now) return null;
@@ -1013,25 +1104,37 @@
      follow-up date moved to the step after. */
   function advanceSequenceEntry(entry, today) {
     var out = Object.assign({}, entry);
+    var steps = seqEntrySteps(entry);
     var done = ((entry.seq && entry.seq.done) || 0) + 1;
     out.seq = Object.assign({}, entry.seq, { done: done });
-    var next = SEQUENCE_STEPS[done];
+    var next = steps[done];
     out.followUp = next ? seqDateAdd(out.seq.start, next.day) : '';
     return out;
   }
 
-  /* Build the day-0 tracking entries for starting a sequence on a segment. */
-  function startSequenceEntries(segmented, segment, suppressions, today) {
+  /* Build the day-0 tracking entries for starting a sequence on a segment.
+     The resolved cadence is stored on each entry so custom day offsets and
+     skipped steps keep working in the Tracking tab. */
+  function startSequenceEntries(segmented, segment, suppressions, today, seqCfg) {
     var now = today || wbTodayISO();
+    var steps = resolveSequenceSteps(seqCfg);
+    if (!steps.length) return [];
+    var first = steps[0];
+    var nextDue = steps[1] ? seqDateAdd(now, steps[1].day) : '';
     return activeCustomers(
       (segmented || []).filter(function (c) { return c.segment === segment; }),
       suppressions
     ).map(function (c) {
       return {
         email: c.email, name: c.name || '', segment: c.segmentLabel,
-        date: now, channel: 'Email', result: 'sent', group: '',
-        followUp: seqDateAdd(now, 3), source: 'sequence',
-        seq: { start: now, done: 1 }
+        date: now, channel: first.channel, result: 'sent', group: '',
+        followUp: nextDue, source: 'sequence',
+        seq: {
+          start: now, done: 1,
+          steps: steps.map(function (s) {
+            return { n: s.n, day: s.day, channel: s.channel, label: s.label };
+          })
+        }
       };
     });
   }
@@ -1076,7 +1179,9 @@
     importResults: importResults,
     offerCostPerWinner: offerCostPerWinner,
     estimateROIActual: estimateROIActual,
+    previewText: previewText,
     SEQUENCE_STEPS: SEQUENCE_STEPS,
+    resolveSequenceSteps: resolveSequenceSteps,
     buildSequence: buildSequence,
     personalizeSeqStep: personalizeSeqStep,
     seqDateAdd: seqDateAdd,

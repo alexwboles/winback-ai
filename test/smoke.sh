@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# WinBack AI smoke tests — 12 checks. Fails fast on first failure.
+# WinBack AI smoke tests — 15 checks. Fails fast on first failure.
 set -u
 cd "$(dirname "$0")/.."
 PASS=0; FAIL=0
@@ -269,17 +269,75 @@ const roi = W.estimateROI(seg, { avgOrderValue: 75, marginPct: 0.5 });
 (roi.expectedNet === 8 && roi.expectedWonBack === 0.4 && roi.expectedRevenue === 22 && roi.expectedCost === 3)
   ? ok('estimateROI unchanged after refactor (net $8)') : bad('estimateROI regression=' + JSON.stringify({net: roi.expectedNet, won: roi.expectedWonBack}));
 
+// 28: preview text (preheader) — every segment x tone, filled with the offer
+let prevOk = true;
+Object.keys(W.SEGMENTS).forEach(s => {
+  ['warm', 'bold'].forEach(t => {
+    const c = W.generateCampaign(s, 'TestBiz', t, 75);
+    if (!(c.preview && c.preview.length > 15 && !c.preview.includes('{offer}'))) prevOk = false;
+  });
+});
+prevOk ? ok('previewText: all 7 segments x 2 tones produce a filled preheader') : bad('previewText incomplete');
+// personalized preview fills {name}
+const pcamp = W.generateCampaign('at-risk', 'Biz', 'warm', 75);
+const pprev = W.personalize(pcamp, { name: 'Jane Doe', email: 'j@x.com' });
+(pprev.preview && !pprev.preview.includes('{name}')) ? ok('personalize: preview text carries no raw merge tags') : bad('personalize preview=' + pprev.preview);
+
+// 29: sequence cadence overrides — custom days + skipped steps
+const cust = W.resolveSequenceSteps({ days: [0, 2, 10, ''], on: [true, false, true, true] });
+const custDays = cust.map(s => [s.n, s.day]);
+(JSON.stringify(custDays) === '[[1,0],[3,10],[4,14]]')
+  ? ok('resolveSequenceSteps: custom days honored, step 2 skipped') : bad('resolveSequenceSteps=' + JSON.stringify(custDays));
+const dflt = W.resolveSequenceSteps();
+(JSON.stringify(dflt.map(s => s.day)) === '[0,3,7,14]')
+  ? ok('resolveSequenceSteps: no config -> 0/3/7/14 defaults') : bad('default steps');
+const bsCust = W.buildSequence('lapsed', 'Biz', 'bold', 75, {}, { days: [0, 2, 10, 5], on: [true, true, true, false] });
+(JSON.stringify(bsCust.map(s => [s.n, s.day])) === '[[1,0],[2,2],[3,10]]')
+  ? ok('buildSequence: respects cadence config (3 steps, custom days)') : bad('buildSequence cfg');
+const bsDflt = W.buildSequence('lapsed', 'Biz', 'bold', 75, {});
+(JSON.stringify(bsDflt.map(s => s.day)) === '[0,3,7,14]')
+  ? ok('buildSequence: no config -> classic 4-touch cadence') : bad('buildSequence default changed');
+
+// 30: custom-cadence entries store their steps; due dates + advance honor them
+const ce = W.startSequenceEntries(seg, 'vip-dormant', [], '2026-10-15', { days: [0, 5, 12, 30], on: [true, true, false, true] });
+const c0 = ce[0];
+const cNext = W.seqNextDue(c0, '2026-10-20');
+const cAdv = W.advanceSequenceEntry(c0);
+(c0 && c0.seq.steps.length === 3 && cNext && cNext.step.n === 2 && cNext.due === '2026-10-20' && cAdv.followUp === '2026-11-14')
+  ? ok('custom cadence: step 2 due day 5, advance jumps skipped step to day-30 final') : bad('custom cadence steps=' + JSON.stringify(c0 && c0.seq.steps));
+const legacy = { email: 'l@x.com', result: 'sent', date: '2026-10-15', seq: { start: '2026-10-15', done: 1 } };
+const lNext = W.seqNextDue(legacy, '2026-10-18');
+(lNext && lNext.step.n === 2 && lNext.due === '2026-10-18')
+  ? ok('legacy entries without stored steps still use 0/3/7/14') : bad('legacy fallback');
+
+// 31: import hygiene — status column auto-suppresses bounces/unsubs
+const hp = W.parseCSV('name,email,last_purchase,total_spent,status\n' +
+  'A,a@x.com,2026-01-01,50,bounced\n' +
+  'B,b@x.com,2026-01-01,60,subscribed\n' +
+  'C,c@x.com,2026-01-01,70,unsubscribed\n' +
+  'D,d@x.com,2026-01-01,80,opted out\n' +
+  'E,e@x.com,2026-01-01,90,hard bounce');
+const hFlags = hp.rows.map(r => r.hygiene);
+(hp.rows.length === 5 && hp.suppressions.length === 4 &&
+ hp.suppressions.indexOf('a@x.com') !== -1 && hp.suppressions.indexOf('c@x.com') !== -1 &&
+ hp.suppressions.indexOf('d@x.com') !== -1 && hp.suppressions.indexOf('e@x.com') !== -1 &&
+ hp.suppressions.indexOf('b@x.com') === -1 && hFlags[1] === '')
+  ? ok('parseCSV: 4 bounced/unsub rows flagged + returned as suppressions; clean row untouched') : bad('hygiene=' + JSON.stringify(hFlags));
+const hn = W.parseCSV('name,email,last_purchase,total_spent\nA,a@x.com,2026-01-01,50\n');
+(hn.rows.length === 1 && hn.suppressions.length === 0)
+  ? ok('parseCSV: no status column -> no suppressions, rows unchanged') : bad('no-status hygiene');
+
 console.log('node checks: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
 EOF
 [ $? -eq 0 ] && ok "node send-path/result-import/sequence checks" || bad "node send-path/result-import/sequence checks"
 
-# 28: UI wiring — send tab, ESP, results, sequences, ROI mode
+# 32: UI wiring — send tab, ESP, results, sequences, ROI mode, v2 surfaces
 missing=""
-for n in tab-send sendSegSel sendQueue sendProgress composeNextBtn espFormat espExportBtn espInfo seqOut seqStartBtn resultInput resultImportBtn resultMsg roiModeEst roiModeAct renderRoiActual estimateROIActual buildSequence personalizeSeqStep seqNextDue advanceSequenceEntry startSequenceEntries composeMailto espExport parseResultImport importResults offerCostPerWinner downloadCSV seqadv qsent qrow prog-bar ESP_FORMATS SEQUENCE_STEPS; do
+for n in tab-send sendSegSel sendQueue sendProgress composeNextBtn espFormat espExportBtn espInfo seqOut seqStartBtn resultInput resultImportBtn resultMsg roiModeEst roiModeAct renderRoiActual estimateROIActual buildSequence personalizeSeqStep seqNextDue advanceSequenceEntry startSequenceEntries composeMailto espExport parseResultImport importResults offerCostPerWinner downloadCSV seqadv qsent qrow prog-bar ESP_FORMATS SEQUENCE_STEPS launchCheck renderLaunchCheck previewText resolveSequenceSteps seqCfg seqflow inboxmock sf-badge chk-mark seqCfgSave data-cfgday data-seqcopy getSeqCfg; do
   grep -q "$n" index.html js/app.js js/logic.js css/style.css || missing="$missing $n"
 done
-[ -z "$missing" ] && ok "UI wires send tab, ESP export, result import, sequences, ROI actuals" || bad "missing wiring:$missing"
+[ -z "$missing" ] && ok "UI wires send tab, ESP export, result import, sequences, ROI actuals, launch checklist, preview text, flow rail" || bad "missing wiring:$missing"
 
 echo ""
 echo "smoke: $PASS passed, $FAIL failed"

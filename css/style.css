@@ -313,3 +313,85 @@ textarea#resultInput { min-height: 110px; font-family: var(--mono); font-size: 1
 @media (max-width: 720px) {
   .qrow { grid-template-columns: 1fr; }
 }
+
+/* ---------- v2: send-tab section nav ---------- */
+.sendnav {
+  display: flex; gap: 12px; align-items: center; margin: 2px 2px 16px;
+  font-size: 13.5px; font-weight: 600;
+}
+.sendnav a { color: var(--coral-deep); text-decoration: none; border-bottom: 1px solid var(--line); }
+.sendnav a:hover { border-bottom-color: var(--coral); }
+.sendnav span { color: var(--muted); }
+
+/* ---------- v2: launch checklist (Mailchimp pre-flight pattern) ---------- */
+#launchCheck { margin-top: 6px; }
+.chk {
+  display: flex; gap: 14px; align-items: flex-start;
+  background: #fff; border: 1px solid var(--line); padding: 14px 16px; margin: 0 0 10px;
+}
+.chk-mark {
+  flex: 0 0 32px; height: 32px; display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 16px; border: 1px solid var(--line); background: #f3ede0; color: var(--muted);
+}
+.chk.ok .chk-mark { background: var(--moss); border-color: var(--moss); color: #fff; }
+.chk-main { flex: 1; min-width: 0; }
+.chk-main strong { display: block; font-size: 14.5px; }
+.chk .btn { margin: 0; flex-shrink: 0; }
+
+/* ---------- v2: inbox mock (subject + preview text, as it lands) ---------- */
+.inboxmock {
+  background: #f7f2e6; border: 1px solid var(--line); padding: 14px 16px; margin-top: 16px;
+}
+.im-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+.im-from { font-weight: 700; font-size: 14px; }
+.im-time { font-size: 12px; color: var(--muted); font-family: var(--mono); }
+.im-subj { font-weight: 650; font-size: 14.5px; }
+.im-prev {
+  color: var(--ink-soft); font-size: 13.5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* ---------- v2: sequence flow rail (Klaviyo flow-builder style) ---------- */
+.seqflow {
+  background: #201912; padding: 28px 26px 26px; margin: 0 0 20px; position: relative;
+  box-shadow: var(--shadow);
+}
+.seqflow::before {
+  content: ''; position: absolute; left: 52px; top: 64px; bottom: 64px; width: 2px;
+  background: rgba(242, 169, 143, .3);
+}
+.sf-node { position: relative; padding: 0 0 0 66px; margin-bottom: 24px; }
+.sf-node:last-child { margin-bottom: 0; }
+.sf-badge {
+  position: absolute; left: 0; top: 0; width: 56px; z-index: 1;
+  text-align: center; font-family: var(--mono); font-size: 10.5px; font-weight: 700;
+  letter-spacing: 1px; color: #f2a98f; background: #201912;
+  border: 1px solid rgba(242, 169, 143, .5); padding: 6px 0;
+}
+.sf-card { background: #fffdf8; border: 1px solid var(--line); padding: 16px 18px; }
+.sf-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.sf-step {
+  font-family: var(--mono); font-size: 11px; font-weight: 700; letter-spacing: 1.6px;
+  text-transform: uppercase; color: var(--coral-deep);
+}
+.sf-head .btn { margin: 0 0 0 auto; }
+.sf-label { font-weight: 700; font-size: 15px; margin-bottom: 6px; }
+.sf-subj { font-size: 13.5px; margin-bottom: 4px; }
+.sf-prev { font-size: 13px; color: var(--muted); font-style: italic; margin-bottom: 8px; }
+.sf-body {
+  font-size: 13.5px; white-space: pre-line; color: var(--ink-soft);
+  border-top: 1px solid var(--line-soft); padding-top: 10px;
+}
+.chkline {
+  display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px;
+  color: var(--ink-soft); margin-top: 25px; cursor: pointer;
+}
+.chkline input[type="checkbox"] { width: auto; margin: 0; }
+
+@media (max-width: 720px) {
+  .seqflow { padding: 20px 16px; }
+  .seqflow::before { left: 38px; }
+  .sf-node { padding-left: 52px; }
+  .sf-badge { width: 46px; font-size: 9.5px; }
+  .chk { padding: 12px; gap: 10px; }
+}

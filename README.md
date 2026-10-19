@@ -6,7 +6,7 @@
 Small businesses (trades, retail, restaurants, salons) have hundreds of past customers in a spreadsheet or POS export. Those customers go quiet, and the business spends money on ads chasing strangers instead of emailing people who already trust them.
 
 ## Solution
-Paste your customer CSV → WinBack AI segments it (RFM-lite: recency × spend) → generates per-segment email + SMS campaigns with subject lines and margin-smart offers → send free via mailto-batch in your own mail client, an ESP-shaped export, or a 4-touch follow-up sequence → import real results and run ROI on actuals.
+Paste your customer CSV → WinBack AI segments it (RFM-lite: recency × spend) → generates per-segment email + SMS campaigns with subject lines and margin-smart offers → send free via mailto-batch in your own mail client, an ESP-shaped export, or a multi-touch follow-up sequence → import real results and run ROI on actuals.
 
 **Segments:** Champions · Recent buyers · At risk · Lapsed · Dormant VIPs · Lost
 
@@ -14,12 +14,13 @@ Paste your customer CSV → WinBack AI segments it (RFM-lite: recency × spend) 
 
 ## Features
 1. **CSV import** — `name, email, last_purchase, total_spent` (orders optional). Handles quoted commas, duplicates, bad emails. Sample data included.
-2. **AI segmentation** — plain-language labels + why each segment matters, sortable customer table.
-3. **Campaign generator** — per-segment email + SMS drafts, 3 subject lines, 2 tones (warm / bold), personalized `{name}` previews, copy buttons, send checklist.
+2. **AI segmentation** — plain-language labels + why each segment matters, sortable customer table. A `status` column (bounced/unsubscribed) is honored at import — those addresses are auto-suppressed.
+3. **Campaign generator** — per-segment email + SMS drafts, 3 subject lines, **preview text (preheader)** with an inbox-style preview, 2 tones (warm / bold), personalized `{name}` previews, copy buttons, send checklist.
 4. **Send path (free)** — no email provider needed:
    - **mailto-batch composer** — one click per recipient opens a pre-written, personalized email in your own mail client; progress tracked, sends auto-logged.
    - **ESP-shaped export** — download the segment with column headers shaped for **Mailchimp**, **Constant Contact**, or **Brevo**, plus documented `Winback Segment / Offer / Score / Subject` columns you map to custom fields.
-   - **Follow-up sequences** — a 4-touch cadence per segment (day 0 email → day 3 SMS → day 7 email → day 14 final call) with per-step copy; start it for a segment and each contact's step + next-due date appears in tracking. Buyers and unsubs drop out automatically.
+   - **Follow-up sequences** — a multi-touch cadence per segment (day 0 email → day 3 SMS → day 7 email → day 14 final call by default) with per-step copy, shown as a flow-builder timeline; **edit the day of each touch or skip steps** (saved per segment). Start it for a segment and each contact's step + next-due date appears in tracking. Buyers and unsubs drop out automatically.
+   - **Launch checklist** — Mailchimp-style pre-flight: audience, drafts, cadence, and tracking rows checked live against the selected segment before you send.
 5. **Tracking sheet** — log who/when/channel/result, **import results** (paste an opens/replies/purchases CSV — flexible headers like `won`, `converted`, `amount`; stronger results upgrade in place, unsubs never overridden), win-back counter, CSV export.
 6. **ROI estimator** — expected win-backs, revenue, offer cost, net — with editable assumptions. Honest, conservative defaults. **Actuals mode** runs the same math on logged/imported results instead of estimates.
 7. **100% local** — no accounts, no uploads, no bulk sending. Your list never leaves the browser.
